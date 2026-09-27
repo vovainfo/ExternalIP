@@ -266,7 +266,7 @@ public sealed class MainForm : Form
         Controls.Add(root);
         MinimumSize = new Size(420, 280);
 
-        _toolTip.SetToolTip(_ipLabel, "Адрес, который видит внешний сервис. Это не адрес сетевой карты.");
+        _toolTip.SetToolTip(_ipLabel, "Адрес, который видит внешний сервис.");
         _toolTip.SetToolTip(_geoLabel, "Приблизительное местоположение внешнего IP по базе GeoIP. Это не координаты компьютера.");
         _toolTip.SetToolTip(_nicValue, "Локальный адрес интерфейса. За роутером сайты его не видят.");
         _toolTip.SetToolTip(_alwaysOnTop, "Держать окно виджета поверх остальных.");
@@ -669,8 +669,7 @@ public sealed class MainForm : Form
         _ipLabel.Font = result.Address.Length > 15 ? _ipFontCompact : _ipFontLarge;
         _sourceLabel.Text = $"Источник: {result.ProviderName}";
         _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl);
-        _explanation.Text = AddressComparison.Describe(result.Address, _nicAddress);
-        _explanation.ForeColor = Color.FromArgb(71, 85, 105);
+        ShowExplanationText(AddressComparison.Describe(result.Address, _nicAddress));
         _copyButton.Enabled = true;
         _geoLabel.Text = "Определение местоположения…";
         _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
@@ -726,7 +725,7 @@ public sealed class MainForm : Form
             _sourceLabel.Text = "Внешний сервис не ответил";
             _geoLabel.Text = "Местоположение не определено";
             _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
-            _explanation.Text = ex.Message;
+            ShowExplanationText(ex.Message);
             SetTrayText("Внешний IP: нет данных");
             ApplyAddressHighlight(false);
             _taskbarBand.SetAddress(null);
@@ -789,6 +788,13 @@ public sealed class MainForm : Form
             _loading = false;
             ShowStatus("Не удалось изменить автозапуск: " + ex.Message, error: true);
         }
+    }
+
+    private void ShowExplanationText(string text)
+    {
+        _explanation.Text = text;
+        _explanation.Visible = text.Length > 0;
+        _explanation.ForeColor = Color.FromArgb(71, 85, 105);
     }
 
     private void ShowExplanation()

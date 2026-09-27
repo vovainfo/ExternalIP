@@ -17,10 +17,10 @@ public class AddressComparisonTests
     }
 
     [Fact]
-    public void Explains_nat_when_the_nic_is_local()
+    public void Says_nothing_when_the_nic_is_only_a_local_address()
     {
-        Assert.Equal(AddressComparison.BehindNat, AddressComparison.Describe("203.0.113.10", "192.168.1.20"));
-        Assert.Equal(AddressComparison.BehindNat, AddressComparison.Describe("203.0.113.10", "100.64.1.5"));
+        Assert.Equal("", AddressComparison.Describe("203.0.113.10", "192.168.1.20"));
+        Assert.Equal("", AddressComparison.Describe("203.0.113.10", "100.64.1.5"));
     }
 
     [Fact]

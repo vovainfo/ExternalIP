@@ -13,9 +13,6 @@ public static class AddressComparison
     public const string Same =
         "Совпадает с адресом сетевой карты: компьютер выходит в интернет напрямую, без NAT.";
 
-    public const string BehindNat =
-        "Это не адрес сетевой карты. У карты локальный адрес, а сайты видят внешний — его сообщил сервис.";
-
     public const string Different =
         "Отличается от адреса сетевой карты. Показан адрес, который увидел внешний сервис.";
 
@@ -28,7 +25,7 @@ public static class AddressComparison
             return Same;
 
         if (IPAddress.TryParse(nicAddress, out var nic) && IpPrivacy.IsNonPublic(nic))
-            return BehindNat;
+            return "";
 
         return Different;
     }
