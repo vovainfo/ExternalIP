@@ -63,12 +63,30 @@ public class OptionalEnvironmentProxyTests
         var proxy = new OptionalEnvironmentProxy
         {
             UseEnvironmentVariables = false,
+            UseSystemProxy = true,
             EnvironmentReader = name => name == "HTTPS_PROXY" ? "http://127.0.0.1:10808" : null,
             SystemProxy = system,
         };
 
         Assert.Equal("10.1.1.1", proxy.GetProxy(Https)!.Host);
         Assert.Contains("системный прокси Windows", string.Join('\n', proxy.Describe(Https)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Ignores_the_system_proxy_when_its_switch_is_off()
+    {
+        var proxy = new OptionalEnvironmentProxy
+        {
+            UseEnvironmentVariables = false,
+            UseSystemProxy = false,
+            EnvironmentReader = _ => null,
+            SystemProxy = new FixedProxy(new Uri("http://127.0.0.1:10808")),
+        };
+
+        Assert.True(proxy.IsBypassed(Https));
+        var text = string.Join('\n', proxy.Describe(Https));
+        Assert.Contains("Системный прокси»: выключен", text, StringComparison.Ordinal);
+        Assert.Contains("напрямую", text, StringComparison.Ordinal);
     }
 
     [Theory]

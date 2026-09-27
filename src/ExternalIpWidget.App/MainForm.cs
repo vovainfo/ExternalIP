@@ -35,6 +35,7 @@ public sealed class MainForm : Form
     private readonly CheckBox _showOnTaskbar;
     private readonly CheckBox _startWithWindows;
     private readonly CheckBox _useEnvironmentProxy;
+    private readonly CheckBox _useSystemProxy;
     private readonly TaskbarIpBand _taskbarBand;
     private readonly NumericUpDown _interval;
 
@@ -54,6 +55,7 @@ public sealed class MainForm : Form
         _environmentProxy = new OptionalEnvironmentProxy
         {
             UseEnvironmentVariables = _settings.UseEnvironmentProxy,
+            UseSystemProxy = _settings.UseSystemProxy,
         };
         _http = PublicIpLookup.CreateHttpClient(_environmentProxy);
         _lookup = new PublicIpLookup(_http, environmentProxy: _environmentProxy);
@@ -168,6 +170,12 @@ public sealed class MainForm : Form
             AutoSize = true,
             Margin = new Padding(0, 6, 16, 0),
         };
+        _useSystemProxy = new CheckBox
+        {
+            Text = "Системный прокси",
+            AutoSize = true,
+            Margin = new Padding(0, 6, 16, 0),
+        };
         _interval = new NumericUpDown
         {
             Minimum = 1,
@@ -226,6 +234,7 @@ public sealed class MainForm : Form
         options.Controls.Add(_showOnTaskbar);
         options.Controls.Add(_startWithWindows);
         options.Controls.Add(_useEnvironmentProxy);
+        options.Controls.Add(_useSystemProxy);
         options.Controls.Add(new Label
         {
             Text = "Интервал, мин",
@@ -264,6 +273,7 @@ public sealed class MainForm : Form
         _toolTip.SetToolTip(_showOnTaskbar, "Показывать внешний IP на панели задач, слева от часов. Плашку можно перетащить.");
         _toolTip.SetToolTip(_startWithWindows, "Добавить ярлык в папку автозагрузки Windows.");
         _toolTip.SetToolTip(_useEnvironmentProxy, "Использовать HTTP_PROXY, HTTPS_PROXY и ALL_PROXY. Выключено — эти переменные не влияют на запрос.");
+        _toolTip.SetToolTip(_useSystemProxy, "Использовать прокси из настроек Windows. Выключено — системный прокси не влияет на запрос.");
         _toolTip.SetToolTip(_interval, "Как часто снова спрашивать внешний сервис.");
         _toolTip.SetToolTip(_traceBox, "Что произошло при запросе внешнего IP: DNS, подключение, ответ сервиса.");
         _toolTip.SetToolTip(_copyTraceButton, "Скопировать журнал, чтобы его можно было разобрать.");
@@ -525,6 +535,16 @@ public sealed class MainForm : Form
             if (!_busy)
                 BeginRefresh();
         };
+        _useSystemProxy.CheckedChanged += (_, _) =>
+        {
+            _environmentProxy.UseSystemProxy = _useSystemProxy.Checked;
+            if (_loading)
+                return;
+            _settings.UseSystemProxy = _useSystemProxy.Checked;
+            ScheduleSave();
+            if (!_busy)
+                BeginRefresh();
+        };
         _interval.ValueChanged += (_, _) =>
         {
             if (_loading)
@@ -549,6 +569,8 @@ public sealed class MainForm : Form
         _showOnTaskbar.Checked = _settings.ShowOnTaskbar;
         _useEnvironmentProxy.Checked = _settings.UseEnvironmentProxy;
         _environmentProxy.UseEnvironmentVariables = _settings.UseEnvironmentProxy;
+        _useSystemProxy.Checked = _settings.UseSystemProxy;
+        _environmentProxy.UseSystemProxy = _settings.UseSystemProxy;
         _interval.Value = Math.Clamp(_settings.RefreshMinutes, (int)_interval.Minimum, (int)_interval.Maximum);
         _startWithWindows.Checked = StartupShortcut.Exists();
         _settings.StartWithWindows = _startWithWindows.Checked;

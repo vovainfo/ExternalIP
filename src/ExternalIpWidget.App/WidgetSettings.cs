@@ -18,6 +18,8 @@ public sealed class WidgetSettings
 
     public bool UseEnvironmentProxy { get; set; }
 
+    public bool UseSystemProxy { get; set; }
+
     public int TaskbarNudge { get; set; }
 
     public void Normalize()

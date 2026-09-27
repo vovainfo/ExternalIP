@@ -4,12 +4,13 @@ using System.Runtime.Versioning;
 namespace ExternalIpWidget.Core;
 
 /// <summary>
-/// Прокси для HttpClient. HTTP_PROXY, HTTPS_PROXY и ALL_PROXY используются только если это включено.
-/// Иначе остаётся системный прокси Windows, а если его нет — прямое соединение.
+/// Прокси для HttpClient. Переменные окружения и системный прокси Windows используются только если это включено.
 /// </summary>
 public sealed class OptionalEnvironmentProxy : IWebProxy
 {
     public bool UseEnvironmentVariables { get; set; }
+
+    public bool UseSystemProxy { get; set; }
 
     public Func<string, string?> EnvironmentReader { get; init; } = Environment.GetEnvironmentVariable;
 
@@ -35,6 +36,9 @@ public sealed class OptionalEnvironmentProxy : IWebProxy
             UseEnvironmentVariables
                 ? "флажок «Прокси HTTP_PROXY»: включён. Используются HTTP_PROXY, HTTPS_PROXY и ALL_PROXY."
                 : "флажок «Прокси HTTP_PROXY»: выключен. HTTP_PROXY, HTTPS_PROXY и ALL_PROXY не используются.",
+            UseSystemProxy
+                ? "флажок «Системный прокси»: включён. Используются настройки прокси Windows."
+                : "флажок «Системный прокси»: выключен. Настройки прокси Windows не используются.",
         };
 
         foreach (var name in new[] { "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY" })
@@ -67,18 +71,23 @@ public sealed class OptionalEnvironmentProxy : IWebProxy
             return ProxyChoice.AsVia(proxy!, "адрес взят из HTTP_PROXY, HTTPS_PROXY или ALL_PROXY");
         }
 
+        if (!UseSystemProxy)
+        {
+            var skipped = UseEnvironmentVariables
+                ? "переменные прокси не заданы, флажок системного прокси выключен"
+                : "флажки прокси выключены, запрос идёт напрямую";
+            return ProxyChoice.AsDirect(skipped);
+        }
+
         if (SystemProxy.IsBypassed(destination))
         {
-            var reason = UseEnvironmentVariables
-                ? "переменные прокси не заданы, системный прокси Windows тоже не задан"
-                : "переменные прокси выключены, системный прокси Windows не задан";
-            return ProxyChoice.AsDirect(reason);
+            return ProxyChoice.AsDirect("системный прокси включён, но в Windows он не задан");
         }
 
         var system = SystemProxy.GetProxy(destination);
         if (system is null || SameEndpoint(system, destination))
         {
-            return ProxyChoice.AsDirect("системный прокси Windows не задан");
+            return ProxyChoice.AsDirect("системный прокси включён, но в Windows он не задан");
         }
 
         var via = UseEnvironmentVariables
