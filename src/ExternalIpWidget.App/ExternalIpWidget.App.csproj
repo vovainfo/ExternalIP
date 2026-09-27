@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>ExternalIpWidget</RootNamespace>
+    <AssemblyName>ExternalIpWidget</AssemblyName>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Version>1.0.0</Version>
+    <Product>Внешний IP</Product>
+    <AssemblyTitle>Внешний IP</AssemblyTitle>
+    <Description>Виджет внешнего IP-адреса. Адрес запрашивается у внешнего сервиса и не берётся с сетевой карты.</Description>
+    <Company>ExternalIpWidget</Company>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ExternalIpWidget.Core\ExternalIpWidget.Core.csproj" />
+  </ItemGroup>
+
+</Project>
