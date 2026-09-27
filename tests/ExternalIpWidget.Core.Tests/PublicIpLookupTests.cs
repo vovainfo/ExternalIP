@@ -7,6 +7,79 @@ namespace ExternalIpWidget.Core.Tests;
 public class PublicIpLookupTests
 {
     [Fact]
+    public async Task Opens_a_new_connection_for_every_request()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var accepts = 0;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var serve = Task.Run(async () =>
+        {
+            while (!cts.IsCancellationRequested)
+            {
+                TcpClient client;
+                try
+                {
+                    client = await listener.AcceptTcpClientAsync(cts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+
+                Interlocked.Increment(ref accepts);
+                _ = KeepAlive(client);
+            }
+        }, cts.Token);
+
+        using var http = PublicIpLookup.CreateHttpClient();
+        var url = $"http://127.0.0.1:{port}/";
+        Assert.Equal("203.0.113.10", (await http.GetStringAsync(url)).Trim());
+        Assert.Equal("203.0.113.10", (await http.GetStringAsync(url)).Trim());
+
+        Assert.Equal(2, accepts);
+        http.Dispose();
+        cts.Cancel();
+        listener.Stop();
+        try
+        {
+            await serve;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private static async Task KeepAlive(TcpClient client)
+    {
+        using (client)
+        {
+            var stream = client.GetStream();
+            var buffer = new byte[2048];
+            var held = new MemoryStream();
+            while (true)
+            {
+                var n = await stream.ReadAsync(buffer);
+                if (n == 0)
+                    return;
+                held.Write(buffer, 0, n);
+                var pending = held.ToArray();
+                var split = pending.AsSpan().IndexOf("\r\n\r\n"u8);
+                if (split < 0)
+                    continue;
+
+                var response = "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: keep-alive\r\n\r\n203.0.113.10"u8.ToArray();
+                await stream.WriteAsync(response);
+                var rest = pending.AsSpan(split + 4).ToArray();
+                held.SetLength(0);
+                if (rest.Length > 0)
+                    held.Write(rest);
+            }
+        }
+    }
+
+    [Fact]
     public void Default_providers_are_external_https_services()
     {
         Assert.NotEmpty(PublicIpLookup.DefaultProviders);
