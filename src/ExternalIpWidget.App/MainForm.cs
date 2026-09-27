@@ -6,6 +6,7 @@ public sealed class MainForm : Form
 {
     private readonly HttpClient _http = PublicIpLookup.CreateHttpClient();
     private readonly PublicIpLookup _lookup;
+    private readonly GeoIpLookup _geo;
     private readonly WidgetSettings _settings = SettingsStore.Load();
     private readonly Icon _icon = WidgetIcon.Create();
     private readonly NotifyIcon _tray = new();
@@ -16,8 +17,10 @@ public sealed class MainForm : Form
     private readonly Font _ipFontCompact;
     private readonly Font _nicFont;
     private readonly Font _eyebrowFont;
+    private readonly Font _geoFont;
 
     private readonly Label _ipLabel;
+    private readonly Label _geoLabel;
     private readonly Label _sourceLabel;
     private readonly Label _nicValue;
     private readonly Label _explanation;
@@ -41,11 +44,13 @@ public sealed class MainForm : Form
     public MainForm()
     {
         _lookup = new PublicIpLookup(_http);
+        _geo = new GeoIpLookup(_http);
         Font = CreateUiFont("Segoe UI", 9.75f, FontStyle.Regular);
         _ipFontLarge = CreateUiFont(Font.FontFamily.Name, 22f, FontStyle.Bold);
         _ipFontCompact = CreateUiFont(Font.FontFamily.Name, 13f, FontStyle.Bold);
         _nicFont = new Font(Font, FontStyle.Bold);
         _eyebrowFont = CreateUiFont(Font.FontFamily.Name, 8.5f, FontStyle.Bold);
+        _geoFont = CreateUiFont(Font.FontFamily.Name, 11f, FontStyle.Regular);
 
         Text = "Внешний IP";
         BackColor = Color.FromArgb(244, 247, 251);
@@ -65,6 +70,15 @@ public sealed class MainForm : Form
             AutoSize = true,
             ForeColor = Color.FromArgb(15, 23, 42),
             Margin = new Padding(0, 2, 0, 0),
+        };
+        _geoLabel = new Label
+        {
+            Text = "Определение местоположения…",
+            Font = _geoFont,
+            AutoSize = true,
+            MaximumSize = new Size(400, 0),
+            ForeColor = Color.FromArgb(15, 23, 42),
+            Margin = new Padding(0, 6, 0, 0),
         };
         _sourceLabel = new Label
         {
@@ -133,6 +147,7 @@ public sealed class MainForm : Form
         };
         card.Controls.Add(Eyebrow());
         card.Controls.Add(_ipLabel);
+        card.Controls.Add(_geoLabel);
         card.Controls.Add(_sourceLabel);
         card.Controls.Add(Caption("не с сетевого адаптера, а от внешнего сервиса"));
 
@@ -194,6 +209,7 @@ public sealed class MainForm : Form
         MinimumSize = new Size(420, 280);
 
         _toolTip.SetToolTip(_ipLabel, "Адрес, который видит внешний сервис. Это не адрес сетевой карты.");
+        _toolTip.SetToolTip(_geoLabel, "Приблизительное местоположение внешнего IP по базе GeoIP. Это не координаты компьютера.");
         _toolTip.SetToolTip(_nicValue, "Локальный адрес интерфейса. За роутером сайты его не видят.");
         _toolTip.SetToolTip(_alwaysOnTop, "Держать окно виджета поверх остальных.");
         _toolTip.SetToolTip(_startWithWindows, "Добавить ярлык в папку автозагрузки Windows.");
@@ -278,6 +294,7 @@ public sealed class MainForm : Form
             _ipFontCompact.Dispose();
             _nicFont.Dispose();
             _eyebrowFont.Dispose();
+            _geoFont.Dispose();
         }
 
         base.Dispose(disposing);
@@ -480,6 +497,7 @@ public sealed class MainForm : Form
             if (generation != _generation || IsDisposed)
                 return;
             ShowResult(result);
+            await ShowGeoAsync(result, generation, token);
         }
         catch (OperationCanceledException) when (generation != _generation || token.IsCancellationRequested)
         {
@@ -509,9 +527,44 @@ public sealed class MainForm : Form
         _explanation.Text = AddressComparison.Describe(result.Address, _nicAddress);
         _explanation.ForeColor = Color.FromArgb(71, 85, 105);
         _copyButton.Enabled = true;
+        _geoLabel.Text = "Определение местоположения…";
+        _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
         Text = $"{result.Address} — Внешний IP";
         SetTrayText("Внешний IP: " + result.Address);
         ShowStatus($"Обновлено в {result.RetrievedAt.LocalDateTime:HH:mm:ss}", error: false);
+    }
+
+    private async Task ShowGeoAsync(PublicIpResult result, int generation, CancellationToken token)
+    {
+        var progress = new Progress<string>(name =>
+        {
+            if (generation == _generation && !IsDisposed)
+                _geoLabel.Text = $"Запрос к {name}…";
+        });
+
+        try
+        {
+            var geo = await _geo.LookupAsync(result.Address, token, progress);
+            if (generation != _generation || IsDisposed)
+                return;
+
+            _geoLabel.Text = geo.FormatPlace();
+            _geoLabel.ForeColor = Color.FromArgb(15, 23, 42);
+            _toolTip.SetToolTip(_geoLabel, geo.FormatDetails());
+            _sourceLabel.Text = $"Источник: {result.ProviderName} · GeoIP: {geo.ProviderName}";
+            _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl + Environment.NewLine + geo.ProviderUrl);
+            SetTrayText($"Внешний IP: {result.Address} · {geo.FormatPlace()}");
+        }
+        catch (OperationCanceledException) when (generation != _generation || token.IsCancellationRequested)
+        {
+        }
+        catch (GeoIpLookupException ex) when (generation == _generation && !IsDisposed)
+        {
+            _geoLabel.Text = "Местоположение не определено";
+            _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
+            var details = ex.Attempts.Count == 0 ? ex.Message : string.Join(Environment.NewLine, ex.Attempts);
+            _toolTip.SetToolTip(_geoLabel, details);
+        }
     }
 
     private void ShowLookupError(PublicIpLookupException ex)
@@ -523,6 +576,8 @@ public sealed class MainForm : Form
             _ipLabel.Text = "нет данных";
             _ipLabel.Font = _ipFontCompact;
             _sourceLabel.Text = "Внешний сервис не ответил";
+            _geoLabel.Text = "Местоположение не определено";
+            _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
             _explanation.Text = ex.Message;
             SetTrayText("Внешний IP: нет данных");
             ShowStatus("Не удалось определить внешний IP. Проверьте интернет и нажмите «Обновить».", error: true);
