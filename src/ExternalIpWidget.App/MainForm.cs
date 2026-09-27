@@ -123,7 +123,7 @@ public sealed class MainForm : Form
         };
         _copyrightLabel = new Label
         {
-            Text = "© Владимир Гуменников",
+            Text = "(C) Владимир Гуменников",
             AutoSize = true,
             ForeColor = Color.FromArgb(148, 163, 184),
             Margin = new Padding(0, 2, 0, 0),
