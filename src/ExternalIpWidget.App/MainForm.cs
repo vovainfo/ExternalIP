@@ -324,6 +324,7 @@ public sealed class MainForm : Form
             BeginRefresh,
             BeginCopy,
             () => _showOnTaskbar.Checked = false,
+            RequestExit,
             nudge =>
             {
                 _settings.TaskbarNudge = nudge;
@@ -511,11 +512,7 @@ public sealed class MainForm : Form
         menu.Items.Add("Обновить", null, (_, _) => BeginRefresh());
         menu.Items.Add("Копировать IP", null, (_, _) => BeginCopy());
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Выход", null, (_, _) =>
-        {
-            _exitRequested = true;
-            Close();
-        });
+        menu.Items.Add("Выход", null, (_, _) => RequestExit());
 
         _tray.Icon = _icon;
         _tray.Text = "External IP: определение…";
@@ -817,6 +814,12 @@ public sealed class MainForm : Form
             _loading = false;
             ShowStatus("Не удалось изменить автозапуск: " + ex.Message, error: true);
         }
+    }
+
+    private void RequestExit()
+    {
+        _exitRequested = true;
+        Close();
     }
 
     private void HideToTray()
