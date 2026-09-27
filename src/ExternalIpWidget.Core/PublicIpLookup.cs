@@ -69,6 +69,11 @@ public sealed class PublicIpLookup
         var attempts = new List<string>();
         Exception? last = null;
         Note(trace, $"старт, сервисов {_providers.Count}, таймаут {_perProviderTimeout.TotalSeconds:0} с, соединение только IPv4");
+        if (Uri.TryCreate(_providers[0].Url, UriKind.Absolute, out var sample))
+        {
+            foreach (var line in ProxyDiagnostics.Explain(sample, HttpClient.DefaultProxy))
+                Note(trace, line);
+        }
 
         foreach (var provider in _providers)
         {
@@ -144,16 +149,31 @@ public sealed class PublicIpLookup
     {
         var host = context.DnsEndPoint.Host;
         var port = context.DnsEndPoint.Port;
-        try
+        var request = context.InitialRequestMessage?.RequestUri;
+        if (request is not null
+            && !host.Equals(request.Host, StringComparison.OrdinalIgnoreCase))
         {
-            var addresses = await Dns.GetHostAddressesAsync(host, AddressFamily.InterNetwork, cancellationToken)
-                .ConfigureAwait(false);
             ConnectTrace.Value?.Invoke(
-                $"DNS {host} A: {(addresses.Length == 0 ? "нет записей" : string.Join(", ", addresses.Select(item => item.ToString())))}");
+                $"подключение к {host}:{port}, а не к {request.Host}:{request.Port}. Это адрес прокси. DNS сервиса {request.Host} здесь не выполнялся.");
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+
+        if (IPAddress.TryParse(host, out _))
         {
-            ConnectTrace.Value?.Invoke($"DNS {host}: {Describe(ex)}");
+            ConnectTrace.Value?.Invoke($"адрес подключения уже задан как {host}:{port}, отдельный DNS-запрос к имени сервиса не нужен.");
+        }
+        else
+        {
+            try
+            {
+                var addresses = await Dns.GetHostAddressesAsync(host, AddressFamily.InterNetwork, cancellationToken)
+                    .ConfigureAwait(false);
+                ConnectTrace.Value?.Invoke(
+                    $"DNS {host} A: {(addresses.Length == 0 ? "нет записей" : string.Join(", ", addresses.Select(item => item.ToString())))}");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                ConnectTrace.Value?.Invoke($"DNS {host}: {Describe(ex)}");
+            }
         }
 
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
@@ -171,8 +191,21 @@ public sealed class PublicIpLookup
         {
             socket.Dispose();
             ConnectTrace.Value?.Invoke($"TCP {host}:{port}: {Describe(ex)}");
+            if (IsLoopback(host) && ex is SocketException { SocketErrorCode: SocketError.ConnectionRefused })
+            {
+                ConnectTrace.Value?.Invoke(
+                    $"{host}:{port} отверг соединение: прокси прописан, но на этом порту никто не слушает. К самому сервису подключение не дошло.");
+            }
+
             throw;
         }
+    }
+
+    private static bool IsLoopback(string host)
+    {
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address);
     }
 
     private static void Note(IProgress<string>? trace, string line)
