@@ -28,7 +28,9 @@ public sealed class MainForm : Form
     private readonly Button _refreshButton;
     private readonly Button _copyButton;
     private readonly CheckBox _alwaysOnTop;
+    private readonly CheckBox _showOnTaskbar;
     private readonly CheckBox _startWithWindows;
+    private readonly TaskbarIpBand _taskbarBand;
     private readonly NumericUpDown _interval;
 
     private CancellationTokenSource? _lookupCts;
@@ -118,6 +120,12 @@ public sealed class MainForm : Form
             AutoSize = true,
             Margin = new Padding(0, 6, 16, 0),
         };
+        _showOnTaskbar = new CheckBox
+        {
+            Text = "На панели задач",
+            AutoSize = true,
+            Margin = new Padding(0, 6, 16, 0),
+        };
         _startWithWindows = new CheckBox
         {
             Text = "Запускать с Windows",
@@ -179,6 +187,7 @@ public sealed class MainForm : Form
             Margin = new Padding(0, 8, 0, 0),
         };
         options.Controls.Add(_alwaysOnTop);
+        options.Controls.Add(_showOnTaskbar);
         options.Controls.Add(_startWithWindows);
         options.Controls.Add(new Label
         {
@@ -212,9 +221,21 @@ public sealed class MainForm : Form
         _toolTip.SetToolTip(_geoLabel, "Приблизительное местоположение внешнего IP по базе GeoIP. Это не координаты компьютера.");
         _toolTip.SetToolTip(_nicValue, "Локальный адрес интерфейса. За роутером сайты его не видят.");
         _toolTip.SetToolTip(_alwaysOnTop, "Держать окно виджета поверх остальных.");
+        _toolTip.SetToolTip(_showOnTaskbar, "Показывать внешний IP на панели задач, слева от часов. Плашку можно перетащить.");
         _toolTip.SetToolTip(_startWithWindows, "Добавить ярлык в папку автозагрузки Windows.");
         _toolTip.SetToolTip(_interval, "Как часто снова спрашивать внешний сервис.");
 
+        _taskbarBand = new TaskbarIpBand(
+            ShowFromTray,
+            BeginRefresh,
+            BeginCopy,
+            () => _showOnTaskbar.Checked = false,
+            nudge =>
+            {
+                _settings.TaskbarNudge = nudge;
+                ScheduleSave();
+            },
+            _settings.TaskbarNudge);
         ConfigureTray();
         BindActions();
         ApplySettings();
@@ -283,6 +304,7 @@ public sealed class MainForm : Form
             _lookupCts?.Dispose();
             _refreshTimer.Dispose();
             _saveTimer.Dispose();
+            _taskbarBand.Dispose();
             _tray.Visible = false;
             _tray.Icon = null;
             _tray.Dispose();
@@ -417,6 +439,14 @@ public sealed class MainForm : Form
             _settings.AlwaysOnTop = _alwaysOnTop.Checked;
             ScheduleSave();
         };
+        _showOnTaskbar.CheckedChanged += (_, _) =>
+        {
+            _taskbarBand.SetEnabled(_showOnTaskbar.Checked);
+            if (_loading)
+                return;
+            _settings.ShowOnTaskbar = _showOnTaskbar.Checked;
+            ScheduleSave();
+        };
         _startWithWindows.CheckedChanged += (_, _) => ToggleStartup();
         _interval.ValueChanged += (_, _) =>
         {
@@ -439,6 +469,7 @@ public sealed class MainForm : Form
     {
         _alwaysOnTop.Checked = _settings.AlwaysOnTop;
         TopMost = _settings.AlwaysOnTop;
+        _showOnTaskbar.Checked = _settings.ShowOnTaskbar;
         _interval.Value = Math.Clamp(_settings.RefreshMinutes, (int)_interval.Minimum, (int)_interval.Maximum);
         _startWithWindows.Checked = StartupShortcut.Exists();
         _settings.StartWithWindows = _startWithWindows.Checked;
@@ -531,6 +562,7 @@ public sealed class MainForm : Form
         _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
         Text = $"{result.Address} — Внешний IP";
         SetTrayText("Внешний IP: " + result.Address);
+        _taskbarBand.SetAddress(result.Address);
         ShowStatus($"Обновлено в {result.RetrievedAt.LocalDateTime:HH:mm:ss}", error: false);
     }
 
@@ -580,6 +612,7 @@ public sealed class MainForm : Form
             _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
             _explanation.Text = ex.Message;
             SetTrayText("Внешний IP: нет данных");
+            _taskbarBand.SetAddress(null);
             ShowStatus("Не удалось определить внешний IP. Проверьте интернет и нажмите «Обновить».", error: true);
             return;
         }
