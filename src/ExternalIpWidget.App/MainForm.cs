@@ -72,7 +72,9 @@ public sealed class MainForm : Form
             Font = _ipFontLarge,
             AutoSize = true,
             ForeColor = Color.FromArgb(15, 23, 42),
+            BackColor = Color.White,
             Margin = new Padding(0, 2, 0, 0),
+            Padding = new Padding(6, 2, 6, 2),
         };
         _geoLabel = new Label
         {
@@ -575,8 +577,11 @@ public sealed class MainForm : Form
 
     private void ShowResult(PublicIpResult result)
     {
+        var addressChanged = !string.Equals(_currentAddress, result.Address, StringComparison.OrdinalIgnoreCase);
         _currentAddress = result.Address;
         _ipLabel.Text = result.Address;
+        if (addressChanged)
+            ApplyAddressHighlight(false);
         _ipLabel.Font = result.Address.Length > 15 ? _ipFontCompact : _ipFontLarge;
         _sourceLabel.Text = $"Источник: {result.ProviderName}";
         _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl);
@@ -607,6 +612,8 @@ public sealed class MainForm : Form
 
             _geoLabel.Text = geo.FormatPlace();
             _geoLabel.ForeColor = Color.FromArgb(15, 23, 42);
+            ApplyAddressHighlight(geo.BelongsToRussia());
+            _taskbarBand.SetRussia(geo.BelongsToRussia());
             _toolTip.SetToolTip(_geoLabel, geo.FormatDetails());
             _sourceLabel.Text = $"Источник: {result.ProviderName} · GeoIP: {geo.ProviderName}";
             _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl + Environment.NewLine + geo.ProviderUrl);
@@ -637,6 +644,7 @@ public sealed class MainForm : Form
             _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
             _explanation.Text = ex.Message;
             SetTrayText("Внешний IP: нет данных");
+            ApplyAddressHighlight(false);
             _taskbarBand.SetAddress(null);
             ShowStatus("Не удалось определить внешний IP. Проверьте интернет и нажмите «Обновить».", error: true);
             return;
@@ -750,6 +758,19 @@ public sealed class MainForm : Form
         Activate();
         BringToFront();
         TopMost = stayOnTop;
+    }
+
+    private void ApplyAddressHighlight(bool russia)
+    {
+        if (russia)
+        {
+            _ipLabel.BackColor = Color.FromArgb(204, 32, 32);
+            _ipLabel.ForeColor = Color.White;
+            return;
+        }
+
+        _ipLabel.BackColor = Color.White;
+        _ipLabel.ForeColor = Color.FromArgb(15, 23, 42);
     }
 
     private void ShowStatus(string text, bool error)

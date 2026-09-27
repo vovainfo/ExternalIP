@@ -17,6 +17,25 @@ public sealed record GeoIpInfo(
     string ProviderName,
     string ProviderUrl)
 {
+    public bool BelongsToRussia()
+    {
+        var code = CountryCode?.Trim();
+        if (!string.IsNullOrEmpty(code))
+        {
+            return code.Equals("RU", StringComparison.OrdinalIgnoreCase)
+                || code.Equals("RUS", StringComparison.OrdinalIgnoreCase);
+        }
+
+        var name = Country?.Trim();
+        if (string.IsNullOrEmpty(name))
+            return false;
+
+        return name.Equals("Россия", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Russia", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Russian Federation", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Российская Федерация", StringComparison.OrdinalIgnoreCase);
+    }
+
     public string FormatPlace()
     {
         var place = string.Join(", ", PlaceParts());

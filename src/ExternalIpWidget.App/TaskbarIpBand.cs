@@ -41,6 +41,7 @@ internal sealed class TaskbarIpBand : Form
     private int _lastW = int.MinValue;
     private int _lastH = int.MinValue;
     private bool _lightTheme;
+    private bool _russia;
     private bool _placing;
     private uint _shellHookMessage;
 
@@ -117,9 +118,23 @@ internal sealed class TaskbarIpBand : Form
             return;
         _address = text;
         _lines = AddressLines.From(text);
+        if (_russia)
+        {
+            _russia = false;
+            ApplyTheme(force: true);
+        }
+
         _lastW = int.MinValue;
         Place();
         Invalidate();
+    }
+
+    public void SetRussia(bool russia)
+    {
+        if (_russia == russia)
+            return;
+        _russia = russia;
+        ApplyTheme(force: true);
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -226,7 +241,7 @@ internal sealed class TaskbarIpBand : Form
         bounds.Inflate(-1, -1);
         using var path = Rounded(bounds, 6);
         using var fill = new SolidBrush(BackColor);
-        using var border = new Pen(_lightTheme ? Color.FromArgb(196, 196, 196) : Color.FromArgb(72, 72, 72));
+        using var border = new Pen(BorderColor());
         e.Graphics.FillPath(fill, path);
         e.Graphics.DrawPath(border, path);
         DrawAddress(e.Graphics);
@@ -405,9 +420,25 @@ internal sealed class TaskbarIpBand : Form
         if (!force && light == _lightTheme)
             return;
         _lightTheme = light;
-        BackColor = light ? Color.FromArgb(243, 243, 243) : Color.FromArgb(32, 32, 32);
-        ForeColor = light ? Color.FromArgb(20, 20, 20) : Color.FromArgb(245, 245, 245);
+        if (_russia)
+        {
+            BackColor = Color.FromArgb(204, 32, 32);
+            ForeColor = Color.White;
+        }
+        else
+        {
+            BackColor = light ? Color.FromArgb(243, 243, 243) : Color.FromArgb(32, 32, 32);
+            ForeColor = light ? Color.FromArgb(20, 20, 20) : Color.FromArgb(245, 245, 245);
+        }
+
         Invalidate();
+    }
+
+    private Color BorderColor()
+    {
+        if (_russia)
+            return Color.FromArgb(148, 18, 18);
+        return _lightTheme ? Color.FromArgb(196, 196, 196) : Color.FromArgb(72, 72, 72);
     }
 
     private static bool SystemUsesLightTheme()

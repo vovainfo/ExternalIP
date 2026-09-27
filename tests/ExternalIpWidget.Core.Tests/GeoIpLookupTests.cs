@@ -39,6 +39,45 @@ public class GeoIpLookupTests
         Assert.Equal("Сан-Хосе, Калифорния, США · Google LLC", info.FormatPlace());
         Assert.Equal("America/Los_Angeles", info.TimeZone);
         Assert.Contains("не координаты компьютера", info.FormatDetails(), StringComparison.Ordinal);
+        Assert.False(info.BelongsToRussia());
+    }
+
+    [Fact]
+    public void Treats_a_russian_geoip_response_as_russia()
+    {
+        const string json = """
+            {
+              "ip": "77.88.8.8",
+              "success": true,
+              "country": "Россия",
+              "country_code": "RU",
+              "city": "Москва"
+            }
+            """;
+
+        var info = GeoIpLookup.Parse("ipwho.is", "https://ipwho.is/77.88.8.8?lang=ru", "77.88.8.8", json);
+
+        Assert.Equal("RU", info.CountryCode);
+        Assert.True(info.BelongsToRussia());
+    }
+
+    [Theory]
+    [InlineData("RU", "Россия", true)]
+    [InlineData("ru", null, true)]
+    [InlineData("RUS", null, true)]
+    [InlineData(null, "Россия", true)]
+    [InlineData(null, "Russia", true)]
+    [InlineData(null, "Russian Federation", true)]
+    [InlineData(null, "Российская Федерация", true)]
+    [InlineData("US", "США", false)]
+    [InlineData(null, "Румыния", false)]
+    [InlineData(null, null, false)]
+    [InlineData("BY", "Беларусь", false)]
+    public void Detects_russia_by_country_code_or_name(string? code, string? country, bool expected)
+    {
+        var info = new GeoIpInfo("77.88.8.8", null, null, country, code, null, null, "test", "https://example.test");
+
+        Assert.Equal(expected, info.BelongsToRussia());
     }
 
     [Fact]
