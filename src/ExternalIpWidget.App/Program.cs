@@ -14,7 +14,7 @@ static class Program
                 {
                     MessageBox.Show(
                         "Виджет внешнего IP уже запущен. Его значок находится в области уведомлений рядом с часами.",
-                        "Внешний IP",
+                        "External IP",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Information);
                 }

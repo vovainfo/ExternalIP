@@ -68,7 +68,7 @@ public sealed class MainForm : Form
         _geoFont = CreateUiFont(Font.FontFamily.Name, 11f, FontStyle.Regular);
         _traceFont = CreateMonoFont();
 
-        Text = "Внешний IP";
+        Text = "External IP";
         BackColor = Color.FromArgb(244, 247, 251);
         ForeColor = Color.FromArgb(15, 23, 42);
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -417,7 +417,7 @@ public sealed class MainForm : Form
     {
         return new Label
         {
-            Text = "ВНЕШНИЙ IP",
+            Text = "EXTERNAL IP",
             AutoSize = true,
             Font = _eyebrowFont,
             ForeColor = Color.FromArgb(37, 99, 235),
@@ -492,7 +492,7 @@ public sealed class MainForm : Form
         });
 
         _tray.Icon = _icon;
-        _tray.Text = "Внешний IP: определение…";
+        _tray.Text = "External IP: определение…";
         _tray.Visible = true;
         _tray.ContextMenuStrip = menu;
         _tray.MouseUp += (_, e) =>
@@ -672,8 +672,8 @@ public sealed class MainForm : Form
         _copyButton.Enabled = true;
         _geoLabel.Text = "Определение местоположения…";
         _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
-        Text = $"{result.Address} — Внешний IP";
-        SetTrayText("Внешний IP: " + result.Address);
+        Text = $"{result.Address} — External IP";
+        SetTrayText("External IP: " + result.Address);
         _taskbarBand.SetAddress(result.Address);
         ShowStatus($"Обновлено в {result.RetrievedAt.LocalDateTime:HH:mm:ss}", error: false);
     }
@@ -699,7 +699,7 @@ public sealed class MainForm : Form
             _toolTip.SetToolTip(_geoLabel, geo.FormatDetails());
             _sourceLabel.Text = $"Источник: {result.ProviderName} · GeoIP: {geo.ProviderName}";
             _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl + Environment.NewLine + geo.ProviderUrl);
-            SetTrayText($"Внешний IP: {result.Address} · {geo.FormatPlace()}");
+            SetTrayText($"External IP: {result.Address} · {geo.FormatPlace()}");
         }
         catch (OperationCanceledException) when (generation != _generation || token.IsCancellationRequested)
         {
@@ -725,7 +725,7 @@ public sealed class MainForm : Form
             _geoLabel.Text = "Местоположение не определено";
             _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
             ShowExplanationText(ex.Message);
-            SetTrayText("Внешний IP: нет данных");
+            SetTrayText("External IP: нет данных");
             ApplyAddressHighlight(false);
             _taskbarBand.SetAddress(null);
             ShowStatus("Не удалось определить внешний IP. Проверьте интернет и нажмите «Обновить».", error: true);
@@ -819,7 +819,7 @@ public sealed class MainForm : Form
             {
                 _tray.ShowBalloonTip(
                     4000,
-                    "Внешний IP",
+                    "External IP",
                     "Виджет свёрнут в трей. Чтобы закрыть его, выберите «Выход» в меню значка.",
                     ToolTipIcon.Info);
                 _settings.TrayHintShown = true;

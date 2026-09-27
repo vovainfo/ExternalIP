@@ -4,11 +4,22 @@ namespace ExternalIpWidget;
 
 public static class StartupShortcut
 {
-    public const string FileName = "Внешний IP.lnk";
+    public const string FileName = "External IP.lnk";
+    private const string PreviousFileName = "Внешний IP.lnk";
 
     public static string ShortcutPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.Startup),
         FileName);
+
+    private static string PreviousShortcutPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.Startup),
+        PreviousFileName);
+
+    private static void DeleteIfExists(string path)
+    {
+        if (File.Exists(path))
+            File.Delete(path);
+    }
 
     public static bool Exists()
     {
@@ -29,10 +40,12 @@ public static class StartupShortcut
 
         if (!enabled)
         {
-            if (File.Exists(ShortcutPath))
-                File.Delete(ShortcutPath);
+            DeleteIfExists(ShortcutPath);
+            DeleteIfExists(PreviousShortcutPath);
             return;
         }
+
+        DeleteIfExists(PreviousShortcutPath);
 
         var target = Environment.ProcessPath
             ?? throw new InvalidOperationException("Не удалось определить путь к программе.");
@@ -47,7 +60,7 @@ public static class StartupShortcut
             shortcut.TargetPath = target;
             shortcut.WorkingDirectory = Path.GetDirectoryName(target) ?? AppContext.BaseDirectory;
             shortcut.WindowStyle = 1;
-            shortcut.Description = "Виджет внешнего IP-адреса";
+            shortcut.Description = "External IP";
             shortcut.Save();
         }
         finally
