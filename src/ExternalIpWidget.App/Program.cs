@@ -10,11 +10,15 @@ static class Program
         {
             if (mutex is null)
             {
-                MessageBox.Show(
-                    "Виджет внешнего IP уже запущен. Его значок находится в области уведомлений рядом с часами.",
-                    "Внешний IP",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
+                if (!SingleInstance.TryActivate())
+                {
+                    MessageBox.Show(
+                        "Виджет внешнего IP уже запущен. Его значок находится в области уведомлений рядом с часами.",
+                        "Внешний IP",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+
                 return;
             }
 

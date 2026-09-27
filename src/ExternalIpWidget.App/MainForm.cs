@@ -40,6 +40,7 @@ public sealed class MainForm : Form
     private bool _ready;
     private bool _hiding;
     private bool _exitRequested;
+    private uint _showMessage;
     private string? _currentAddress;
     private string? _nicAddress;
 
@@ -255,7 +256,29 @@ public sealed class MainForm : Form
         };
         ApplyInterval();
 
-        Shown += (_, _) => BeginRefresh();
+        Shown += (_, _) =>
+        {
+            EnsureOnScreen();
+            BeginRefresh();
+        };
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        SingleInstance.Mark(Handle);
+        _showMessage = SingleInstance.RegisterShowMessage();
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (_showMessage != 0 && m.Msg == (int)_showMessage)
+        {
+            ShowFromTray();
+            return;
+        }
+
+        base.WndProc(ref m);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -474,10 +497,12 @@ public sealed class MainForm : Form
         _startWithWindows.Checked = StartupShortcut.Exists();
         _settings.StartWithWindows = _startWithWindows.Checked;
 
-        if (_settings.WindowX is int x && _settings.WindowY is int y && IsOnAnyScreen(x, y))
+        if (_settings.WindowX is int x && _settings.WindowY is int y)
         {
             StartPosition = FormStartPosition.Manual;
-            Location = new Point(x, y);
+            var window = new PixelRect(x, y, Math.Max(Width, MinimumSize.Width), Math.Max(Height, MinimumSize.Height));
+            var placed = WindowPlacement.MoveIntoView(window, WorkAreas());
+            Location = new Point(placed.X, placed.Y);
         }
     }
 
@@ -687,9 +712,12 @@ public sealed class MainForm : Form
         _hiding = true;
         try
         {
+            RememberLocation();
             Hide();
             ShowInTaskbar = false;
-            WindowState = FormWindowState.Normal;
+            if (WindowState == FormWindowState.Minimized)
+                WindowState = FormWindowState.Normal;
+            RestoreRememberedLocation();
             if (!_settings.TrayHintShown)
             {
                 _tray.ShowBalloonTip(
@@ -710,9 +738,18 @@ public sealed class MainForm : Form
     private void ShowFromTray()
     {
         ShowInTaskbar = true;
+        if (WindowState != FormWindowState.Normal)
+            WindowState = FormWindowState.Normal;
+
+        EnsureOnScreen();
         Show();
-        WindowState = FormWindowState.Normal;
+        EnsureOnScreen();
+
+        var stayOnTop = _settings.AlwaysOnTop;
+        TopMost = true;
         Activate();
+        BringToFront();
+        TopMost = stayOnTop;
     }
 
     private void ShowStatus(string text, bool error)
@@ -728,10 +765,66 @@ public sealed class MainForm : Form
 
     private void RememberLocation()
     {
-        if (!Visible)
+        if (!Visible || WindowState != FormWindowState.Normal)
             return;
+
+        var window = CurrentRect();
+        if (!WorkAreas().Any(area => WindowPlacement.HasUsefulOverlap(window, area)))
+            return;
+
         _settings.WindowX = Location.X;
         _settings.WindowY = Location.Y;
+    }
+
+    private void RestoreRememberedLocation()
+    {
+        if (_settings.WindowX is not int x || _settings.WindowY is not int y)
+            return;
+
+        var window = new PixelRect(x, y, CurrentRect().Width, CurrentRect().Height);
+        if (!WorkAreas().Any(area => WindowPlacement.HasUsefulOverlap(window, area)))
+            return;
+
+        Location = new Point(x, y);
+    }
+
+    private void EnsureOnScreen()
+    {
+        var placed = WindowPlacement.MoveIntoView(CurrentRect(), WorkAreas());
+        if (placed.X == Location.X && placed.Y == Location.Y)
+            return;
+
+        StartPosition = FormStartPosition.Manual;
+        Location = new Point(placed.X, placed.Y);
+        if (!_ready || _hiding || !Visible || WindowState != FormWindowState.Normal)
+            return;
+
+        RememberLocation();
+        ScheduleSave();
+    }
+
+    private PixelRect CurrentRect()
+    {
+        var width = Width > 0 ? Width : MinimumSize.Width;
+        var height = Height > 0 ? Height : MinimumSize.Height;
+        return new PixelRect(Location.X, Location.Y, width, height);
+    }
+
+    private static IReadOnlyList<PixelRect> WorkAreas()
+    {
+        var screens = Screen.AllScreens;
+        if (screens.Length == 0)
+            return [];
+
+        var current = Screen.FromPoint(Cursor.Position);
+        return screens
+            .OrderByDescending(screen => ReferenceEquals(screen, current))
+            .Select(screen =>
+            {
+                var area = screen.WorkingArea;
+                return new PixelRect(area.X, area.Y, area.Width, area.Height);
+            })
+            .ToArray();
     }
 
     private void ScheduleSave()
@@ -754,9 +847,4 @@ public sealed class MainForm : Form
         }
     }
 
-    private static bool IsOnAnyScreen(int x, int y)
-    {
-        var point = new Point(x, y);
-        return Screen.AllScreens.Any(screen => screen.WorkingArea.Contains(point));
-    }
 }
