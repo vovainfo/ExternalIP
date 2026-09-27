@@ -209,6 +209,35 @@ public class PublicIpLookupTests
     }
 
     [Fact]
+    public async Task Does_not_call_a_service_when_the_custom_proxy_is_unusable()
+    {
+        var called = false;
+        var handler = new DelegateHandler((_, _) =>
+        {
+            called = true;
+            return Task.FromResult(Text("203.0.113.10"));
+        });
+        var proxy = new OptionalEnvironmentProxy
+        {
+            Mode = ProxyMode.Custom,
+            CustomProxy = "://",
+        };
+        using var http = Client(handler);
+        var lookup = new PublicIpLookup(
+            http,
+            [new IpProvider("example", "https://example.test/ip")],
+            environmentProxy: proxy);
+        var lines = new List<string>();
+
+        var ex = await Assert.ThrowsAsync<PublicIpLookupException>(() => lookup.GetAsync(trace: new SyncProgress(lines.Add)));
+
+        Assert.False(called);
+        Assert.Empty(ex.Attempts);
+        Assert.Contains("не распознан", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(lines, line => line.Contains("не распознан", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Rejects_an_empty_provider_list()
     {
         using var http = Client(new DelegateHandler((_, _) => Task.FromResult(Text("203.0.113.10"))));

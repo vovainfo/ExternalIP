@@ -1,3 +1,5 @@
+using ExternalIpWidget.Core;
+
 namespace ExternalIpWidget;
 
 public sealed class WidgetSettings
@@ -16,6 +18,12 @@ public sealed class WidgetSettings
 
     public bool ShowOnTaskbar { get; set; } = true;
 
+    public ProxyMode ProxyMode { get; set; }
+
+    public bool ProxyChoiceSaved { get; set; }
+
+    public string CustomProxy { get; set; } = "";
+
     public bool UseEnvironmentProxy { get; set; }
 
     public bool UseSystemProxy { get; set; }
@@ -29,5 +37,10 @@ public sealed class WidgetSettings
         if (RefreshMinutes > 120)
             RefreshMinutes = 120;
         TaskbarNudge = Math.Clamp(TaskbarNudge, -10000, 10000);
+        ProxyMode = ProxyModeMigration.Resolve(ProxyChoiceSaved, ProxyMode, UseEnvironmentProxy, UseSystemProxy);
+        ProxyChoiceSaved = true;
+        UseEnvironmentProxy = ProxyMode == ProxyMode.Environment;
+        UseSystemProxy = ProxyMode == ProxyMode.System;
+        CustomProxy = (CustomProxy ?? "").Trim();
     }
 }

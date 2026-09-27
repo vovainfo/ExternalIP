@@ -16,26 +16,24 @@ public sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer _saveTimer = new() { Interval = 400 };
     private readonly Font _ipFontLarge;
     private readonly Font _ipFontCompact;
-    private readonly Font _nicFont;
     private readonly Font _eyebrowFont;
     private readonly Font _geoFont;
-    private readonly Font _traceFont;
 
     private readonly Label _ipLabel;
     private readonly Label _geoLabel;
     private readonly Label _sourceLabel;
-    private readonly Label _nicValue;
-    private readonly Label _explanation;
     private readonly Label _status;
-    private readonly TextBox _traceBox;
+    private readonly Label _proxyReference;
     private readonly Button _refreshButton;
     private readonly Button _copyButton;
-    private readonly Button _copyTraceButton;
+    private readonly Button _logButton;
     private readonly CheckBox _alwaysOnTop;
     private readonly CheckBox _showOnTaskbar;
     private readonly CheckBox _startWithWindows;
-    private readonly CheckBox _useEnvironmentProxy;
-    private readonly CheckBox _useSystemProxy;
+    private readonly ComboBox _proxyMode;
+    private readonly TextBox _customProxy;
+    private readonly FlowLayoutPanel _customProxyRow;
+    private readonly RequestLogForm _log = new();
     private readonly TaskbarIpBand _taskbarBand;
     private readonly NumericUpDown _interval;
 
@@ -48,14 +46,15 @@ public sealed class MainForm : Form
     private bool _exitRequested;
     private uint _showMessage;
     private string? _currentAddress;
-    private string? _nicAddress;
+    private string? _appliedCustomProxy;
 
     public MainForm()
     {
+        _settings.Normalize();
         _environmentProxy = new OptionalEnvironmentProxy
         {
-            UseEnvironmentVariables = _settings.UseEnvironmentProxy,
-            UseSystemProxy = _settings.UseSystemProxy,
+            Mode = _settings.ProxyMode,
+            CustomProxy = _settings.CustomProxy,
         };
         _http = PublicIpLookup.CreateHttpClient(_environmentProxy);
         _lookup = new PublicIpLookup(_http, environmentProxy: _environmentProxy);
@@ -63,10 +62,8 @@ public sealed class MainForm : Form
         Font = CreateUiFont("Segoe UI", 9.75f, FontStyle.Regular);
         _ipFontLarge = CreateUiFont(Font.FontFamily.Name, 22f, FontStyle.Bold);
         _ipFontCompact = CreateUiFont(Font.FontFamily.Name, 13f, FontStyle.Bold);
-        _nicFont = new Font(Font, FontStyle.Bold);
         _eyebrowFont = CreateUiFont(Font.FontFamily.Name, 8.5f, FontStyle.Bold);
         _geoFont = CreateUiFont(Font.FontFamily.Name, 11f, FontStyle.Regular);
-        _traceFont = CreateMonoFont();
 
         Text = "External IP";
         BackColor = Color.FromArgb(244, 247, 251);
@@ -105,21 +102,6 @@ public sealed class MainForm : Form
             ForeColor = Color.FromArgb(100, 116, 139),
             Margin = new Padding(0, 4, 0, 0),
         };
-        _nicValue = new Label
-        {
-            AutoSize = true,
-            Font = _nicFont,
-            ForeColor = Color.FromArgb(15, 23, 42),
-            Margin = new Padding(0, 2, 0, 0),
-        };
-        _explanation = new Label
-        {
-            AutoSize = true,
-            MaximumSize = new Size(436, 0),
-            ForeColor = Color.FromArgb(71, 85, 105),
-            Margin = new Padding(0, 8, 0, 0),
-            Text = "Внешний адрес запрашивается у стороннего сервиса и появится здесь.",
-        };
         _status = new Label
         {
             AutoSize = true,
@@ -130,22 +112,7 @@ public sealed class MainForm : Form
         _refreshButton = CreateButton("Обновить", primary: true);
         _copyButton = CreateButton("Копировать", primary: false);
         _copyButton.Enabled = false;
-        _copyTraceButton = CreateButton("Копировать журнал", primary: false);
-        _traceBox = new TextBox
-        {
-            Multiline = true,
-            ReadOnly = true,
-            WordWrap = true,
-            ScrollBars = ScrollBars.Vertical,
-            Font = _traceFont,
-            Width = 436,
-            Height = 148,
-            BackColor = Color.FromArgb(248, 250, 252),
-            ForeColor = Color.FromArgb(15, 23, 42),
-            BorderStyle = BorderStyle.FixedSingle,
-            Text = "Журнал запроса появится после обновления.",
-            Margin = new Padding(0, 4, 0, 0),
-        };
+        _logButton = CreateButton("Журнал запросов", primary: false);
         _alwaysOnTop = new CheckBox
         {
             Text = "Поверх всех окон",
@@ -164,18 +131,41 @@ public sealed class MainForm : Form
             AutoSize = true,
             Margin = new Padding(0, 6, 16, 0),
         };
-        _useEnvironmentProxy = new CheckBox
+        _proxyMode = new ComboBox
         {
-            Text = "Прокси HTTP_PROXY",
-            AutoSize = true,
-            Margin = new Padding(0, 6, 16, 0),
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 320,
+            Margin = new Padding(0, 4, 0, 0),
         };
-        _useSystemProxy = new CheckBox
+        _proxyMode.Items.AddRange(["Без прокси", "Переменная окружения HTTP_PROXY", "Системный прокси", "Заданный прокси"]);
+        _proxyReference = new Label
         {
-            Text = "Системный прокси",
             AutoSize = true,
-            Margin = new Padding(0, 6, 16, 0),
+            MaximumSize = new Size(436, 0),
+            ForeColor = Color.FromArgb(71, 85, 105),
+            Margin = new Padding(0, 6, 0, 0),
+            Visible = false,
         };
+        _customProxy = new TextBox
+        {
+            Width = 280,
+            Margin = new Padding(0, 4, 0, 0),
+        };
+        _customProxyRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            WrapContents = false,
+            Visible = false,
+            Margin = new Padding(0, 6, 0, 0),
+        };
+        _customProxyRow.Controls.Add(new Label
+        {
+            Text = "Адрес",
+            AutoSize = true,
+            Margin = new Padding(0, 8, 8, 0),
+            ForeColor = Color.FromArgb(71, 85, 105),
+        });
+        _customProxyRow.Controls.Add(_customProxy);
         _interval = new NumericUpDown
         {
             Minimum = 1,
@@ -211,16 +201,7 @@ public sealed class MainForm : Form
         };
         buttons.Controls.Add(_refreshButton);
         buttons.Controls.Add(_copyButton);
-        var why = new LinkLabel
-        {
-            Text = "Почему адреса разные?",
-            AutoSize = true,
-            Margin = new Padding(8, 8, 0, 0),
-            LinkColor = Color.FromArgb(37, 99, 235),
-            ActiveLinkColor = Color.FromArgb(29, 78, 216),
-        };
-        why.LinkClicked += (_, _) => ShowExplanation();
-        buttons.Controls.Add(why);
+        buttons.Controls.Add(_logButton);
 
         var options = new FlowLayoutPanel
         {
@@ -232,8 +213,6 @@ public sealed class MainForm : Form
         options.Controls.Add(_alwaysOnTop);
         options.Controls.Add(_showOnTaskbar);
         options.Controls.Add(_startWithWindows);
-        options.Controls.Add(_useEnvironmentProxy);
-        options.Controls.Add(_useSystemProxy);
         options.Controls.Add(new Label
         {
             Text = "Интервал, мин",
@@ -242,6 +221,32 @@ public sealed class MainForm : Form
             ForeColor = Color.FromArgb(71, 85, 105),
         });
         options.Controls.Add(_interval);
+
+        var proxyBlock = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            MaximumSize = new Size(436, 0),
+            Margin = new Padding(0, 8, 0, 0),
+        };
+        var proxyRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            WrapContents = false,
+            Margin = new Padding(0),
+        };
+        proxyRow.Controls.Add(new Label
+        {
+            Text = "Прокси",
+            AutoSize = true,
+            Margin = new Padding(0, 8, 8, 0),
+            ForeColor = Color.FromArgb(71, 85, 105),
+        });
+        proxyRow.Controls.Add(_proxyMode);
+        proxyBlock.Controls.Add(proxyRow);
+        proxyBlock.Controls.Add(_proxyReference);
+        proxyBlock.Controls.Add(_customProxyRow);
 
         var root = new FlowLayoutPanel
         {
@@ -252,30 +257,24 @@ public sealed class MainForm : Form
             Padding = new Padding(16, 14, 16, 14),
         };
         root.Controls.Add(card);
-        root.Controls.Add(NicBlock());
-        root.Controls.Add(_explanation);
         root.Controls.Add(buttons);
         root.Controls.Add(options);
+        root.Controls.Add(proxyBlock);
         root.Controls.Add(_status);
-        root.Controls.Add(Caption("Журнал запроса"));
-        root.Controls.Add(_traceBox);
-        root.Controls.Add(_copyTraceButton);
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
         Controls.Add(root);
-        MinimumSize = new Size(420, 280);
+        MinimumSize = new Size(420, 220);
 
         _toolTip.SetToolTip(_ipLabel, "Адрес, который видит внешний сервис.");
         _toolTip.SetToolTip(_geoLabel, "Приблизительное местоположение внешнего IP по базе GeoIP. Это не координаты компьютера.");
-        _toolTip.SetToolTip(_nicValue, "Локальный адрес интерфейса. За роутером сайты его не видят.");
         _toolTip.SetToolTip(_alwaysOnTop, "Держать окно виджета поверх остальных.");
         _toolTip.SetToolTip(_showOnTaskbar, "Показывать внешний IP на панели задач, слева от часов. Плашку можно перетащить.");
         _toolTip.SetToolTip(_startWithWindows, "Добавить ярлык в папку автозагрузки Windows.");
-        _toolTip.SetToolTip(_useEnvironmentProxy, "Использовать HTTP_PROXY, HTTPS_PROXY и ALL_PROXY. Выключено — эти переменные не влияют на запрос.");
-        _toolTip.SetToolTip(_useSystemProxy, "Использовать прокси из настроек Windows. Выключено — системный прокси не влияет на запрос.");
+        _toolTip.SetToolTip(_proxyMode, "Как виджет подключается к сервисам при проверке адреса.");
+        _toolTip.SetToolTip(_customProxy, "Адрес своего прокси, например 127.0.0.1:8080 или http://proxy:8080.");
         _toolTip.SetToolTip(_interval, "Как часто снова спрашивать внешний сервис.");
-        _toolTip.SetToolTip(_traceBox, "Что произошло при запросе внешнего IP: DNS, подключение, ответ сервиса.");
-        _toolTip.SetToolTip(_copyTraceButton, "Скопировать журнал, чтобы его можно было разобрать.");
+        _toolTip.SetToolTip(_logButton, "Открыть журнал последнего запроса: прокси, DNS, подключение и ответ сервиса.");
 
         _taskbarBand = new TaskbarIpBand(
             ShowFromTray,
@@ -291,7 +290,6 @@ public sealed class MainForm : Form
         ConfigureTray();
         BindActions();
         ApplySettings();
-        UpdateNic();
         _loading = false;
         _ready = true;
 
@@ -343,6 +341,7 @@ public sealed class MainForm : Form
 
         RememberLocation();
         TrySave();
+        _log.ForceClose();
         base.OnFormClosing(e);
     }
 
@@ -378,6 +377,8 @@ public sealed class MainForm : Form
             _lookupCts?.Dispose();
             _refreshTimer.Dispose();
             _saveTimer.Dispose();
+            _log.ForceClose();
+            _log.Dispose();
             _taskbarBand.Dispose();
             _tray.Visible = false;
             _tray.Icon = null;
@@ -388,29 +389,11 @@ public sealed class MainForm : Form
             _toolTip.Dispose();
             _ipFontLarge.Dispose();
             _ipFontCompact.Dispose();
-            _nicFont.Dispose();
             _eyebrowFont.Dispose();
             _geoFont.Dispose();
-            _traceFont.Dispose();
         }
 
         base.Dispose(disposing);
-    }
-
-    private Control NicBlock()
-    {
-        var caption = Caption("Адрес сетевой карты");
-        caption.Margin = new Padding(0, 14, 0, 0);
-        var block = new FlowLayoutPanel
-        {
-            AutoSize = true,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false,
-            Margin = new Padding(0),
-        };
-        block.Controls.Add(caption);
-        block.Controls.Add(_nicValue);
-        return block;
     }
 
     private Label Eyebrow()
@@ -434,16 +417,6 @@ public sealed class MainForm : Form
         {
             return new Font(FontFamily.GenericSansSerif, size, style, GraphicsUnit.Point);
         }
-    }
-
-    private static Label Caption(string text)
-    {
-        return new Label
-        {
-            Text = text,
-            AutoSize = true,
-            ForeColor = Color.FromArgb(100, 116, 139),
-        };
     }
 
     private static Button CreateButton(string text, bool primary)
@@ -506,7 +479,7 @@ public sealed class MainForm : Form
     {
         _refreshButton.Click += (_, _) => BeginRefresh();
         _copyButton.Click += (_, _) => BeginCopy();
-        _copyTraceButton.Click += (_, _) => CopyTrace();
+        _logButton.Click += (_, _) => _log.Present();
         _alwaysOnTop.CheckedChanged += (_, _) =>
         {
             TopMost = _alwaysOnTop.Checked;
@@ -524,25 +497,33 @@ public sealed class MainForm : Form
             ScheduleSave();
         };
         _startWithWindows.CheckedChanged += (_, _) => ToggleStartup();
-        _useEnvironmentProxy.CheckedChanged += (_, _) =>
+        _proxyMode.SelectedIndexChanged += (_, _) =>
         {
-            _environmentProxy.UseEnvironmentVariables = _useEnvironmentProxy.Checked;
+            var mode = SelectedProxyMode();
+            _environmentProxy.Mode = mode;
+            UpdateProxyDetails();
             if (_loading)
                 return;
-            _settings.UseEnvironmentProxy = _useEnvironmentProxy.Checked;
+            _settings.ProxyMode = mode;
+            _settings.ProxyChoiceSaved = true;
             ScheduleSave();
-            if (!_busy)
-                BeginRefresh();
+            BeginRefresh();
         };
-        _useSystemProxy.CheckedChanged += (_, _) =>
+        _customProxy.TextChanged += (_, _) =>
         {
-            _environmentProxy.UseSystemProxy = _useSystemProxy.Checked;
+            _environmentProxy.CustomProxy = _customProxy.Text;
             if (_loading)
                 return;
-            _settings.UseSystemProxy = _useSystemProxy.Checked;
+            _settings.CustomProxy = _customProxy.Text;
             ScheduleSave();
-            if (!_busy)
-                BeginRefresh();
+        };
+        _customProxy.Leave += (_, _) => ApplyCustomProxy(refresh: true);
+        _customProxy.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Enter || SelectedProxyMode() != ProxyMode.Custom)
+                return;
+            e.SuppressKeyPress = true;
+            ApplyCustomProxy(refresh: true);
         };
         _interval.ValueChanged += (_, _) =>
         {
@@ -566,10 +547,12 @@ public sealed class MainForm : Form
         _alwaysOnTop.Checked = _settings.AlwaysOnTop;
         TopMost = _settings.AlwaysOnTop;
         _showOnTaskbar.Checked = _settings.ShowOnTaskbar;
-        _useEnvironmentProxy.Checked = _settings.UseEnvironmentProxy;
-        _environmentProxy.UseEnvironmentVariables = _settings.UseEnvironmentProxy;
-        _useSystemProxy.Checked = _settings.UseSystemProxy;
-        _environmentProxy.UseSystemProxy = _settings.UseSystemProxy;
+        _customProxy.Text = _settings.CustomProxy;
+        _environmentProxy.CustomProxy = _settings.CustomProxy;
+        _appliedCustomProxy = _settings.CustomProxy.Trim();
+        _environmentProxy.Mode = _settings.ProxyMode;
+        _proxyMode.SelectedIndex = ProxyIndex(_settings.ProxyMode);
+        UpdateProxyDetails();
         _interval.Value = Math.Clamp(_settings.RefreshMinutes, (int)_interval.Minimum, (int)_interval.Maximum);
         _startWithWindows.Checked = StartupShortcut.Exists();
         _settings.StartWithWindows = _startWithWindows.Checked;
@@ -621,9 +604,10 @@ public sealed class MainForm : Form
 
         try
         {
-            UpdateNic();
-            _traceBox.Clear();
-            AppendTrace($"сетевая карта: {_nicAddress ?? "не определён"}");
+            _log.Clear();
+            UpdateProxyDetails();
+            if (SelectedProxyMode() == ProxyMode.Custom)
+                _appliedCustomProxy = _customProxy.Text.Trim();
             var progress = new Progress<string>(name =>
             {
                 if (generation == _generation && !IsDisposed)
@@ -668,7 +652,6 @@ public sealed class MainForm : Form
         _ipLabel.Font = result.Address.Length > 15 ? _ipFontCompact : _ipFontLarge;
         _sourceLabel.Text = $"Источник: {result.ProviderName}";
         _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl);
-        ShowExplanationText(AddressComparison.Describe(result.Address, _nicAddress));
         _copyButton.Enabled = true;
         _geoLabel.Text = "Определение местоположения…";
         _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
@@ -721,14 +704,19 @@ public sealed class MainForm : Form
         {
             _ipLabel.Text = "нет данных";
             _ipLabel.Font = _ipFontCompact;
-            _sourceLabel.Text = "Внешний сервис не ответил";
+            _sourceLabel.Text = ex.Attempts.Count == 0
+                ? "Проверка не выполнена"
+                : "Внешний сервис не ответил";
             _geoLabel.Text = "Местоположение не определено";
             _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
-            ShowExplanationText(ex.Message);
             SetTrayText("External IP: нет данных");
             ApplyAddressHighlight(false);
             _taskbarBand.SetAddress(null);
-            ShowStatus("Не удалось определить внешний IP. Проверьте интернет и нажмите «Обновить».", error: true);
+            ShowStatus(
+                ex.Attempts.Count == 0
+                    ? ex.Message
+                    : "Не удалось определить внешний IP. Проверьте интернет и нажмите «Обновить».",
+                error: true);
             return;
         }
 
@@ -763,12 +751,6 @@ public sealed class MainForm : Form
         }
     }
 
-    private void UpdateNic()
-    {
-        _nicAddress = LocalNicAddress.TryGetOutbound();
-        _nicValue.Text = _nicAddress ?? "не определён";
-    }
-
     private void ToggleStartup()
     {
         if (_loading)
@@ -787,18 +769,6 @@ public sealed class MainForm : Form
             _loading = false;
             ShowStatus("Не удалось изменить автозапуск: " + ex.Message, error: true);
         }
-    }
-
-    private void ShowExplanationText(string text)
-    {
-        _explanation.Text = text;
-        _explanation.Visible = text.Length > 0;
-        _explanation.ForeColor = Color.FromArgb(71, 85, 105);
-    }
-
-    private void ShowExplanation()
-    {
-        MessageBox.Show(this, NatExplanation.Body, NatExplanation.Title, MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void HideToTray()
@@ -866,41 +836,62 @@ public sealed class MainForm : Form
     {
         if (IsDisposed)
             return;
-        if (_traceBox.TextLength > 0)
-            _traceBox.AppendText(Environment.NewLine);
-        _traceBox.AppendText(line);
-        _traceBox.SelectionStart = _traceBox.TextLength;
-        _traceBox.ScrollToCaret();
+        _log.AppendLine(line);
     }
 
-    private void CopyTrace()
+    private ProxyMode SelectedProxyMode()
     {
-        if (_traceBox.TextLength == 0)
-            return;
-
-        try
-        {
-            Clipboard.SetText(_traceBox.Text);
-        }
-        catch (System.Runtime.InteropServices.ExternalException)
-        {
-            ShowStatus("Не удалось скопировать журнал.", error: true);
-            return;
-        }
-
-        ShowStatus("Журнал скопирован.", error: false);
+        return ProxyIndexMode(_proxyMode.SelectedIndex);
     }
 
-    private static Font CreateMonoFont()
+    private static int ProxyIndex(ProxyMode mode)
     {
-        try
+        return mode switch
         {
-            return new Font("Consolas", 8.5f, FontStyle.Regular, GraphicsUnit.Point);
-        }
-        catch (ArgumentException)
+            ProxyMode.Environment => 1,
+            ProxyMode.System => 2,
+            ProxyMode.Custom => 3,
+            _ => 0,
+        };
+    }
+
+    private static ProxyMode ProxyIndexMode(int index)
+    {
+        return index switch
         {
-            return new Font(FontFamily.GenericMonospace, 8.5f, FontStyle.Regular, GraphicsUnit.Point);
-        }
+            1 => ProxyMode.Environment,
+            2 => ProxyMode.System,
+            3 => ProxyMode.Custom,
+            _ => ProxyMode.None,
+        };
+    }
+
+    private void ApplyCustomProxy(bool refresh)
+    {
+        if (_loading || IsDisposed || SelectedProxyMode() != ProxyMode.Custom)
+            return;
+
+        var text = _customProxy.Text.Trim();
+        _environmentProxy.CustomProxy = text;
+        _settings.CustomProxy = text;
+        ScheduleSave();
+        if (!refresh || string.Equals(text, _appliedCustomProxy, StringComparison.Ordinal))
+            return;
+
+        _appliedCustomProxy = text;
+        BeginRefresh();
+    }
+
+    private void UpdateProxyDetails()
+    {
+        var mode = SelectedProxyMode();
+        var showReference = mode is ProxyMode.Environment or ProxyMode.System;
+        _customProxyRow.Visible = mode == ProxyMode.Custom;
+        _proxyReference.Visible = showReference;
+        if (!showReference)
+            return;
+
+        _proxyReference.Text = _environmentProxy.ReferenceText(new Uri("https://api.ipify.org/"));
     }
 
     private void ShowStatus(string text, bool error)

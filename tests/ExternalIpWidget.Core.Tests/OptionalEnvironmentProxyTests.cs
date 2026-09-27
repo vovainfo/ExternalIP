@@ -9,22 +9,24 @@ public class OptionalEnvironmentProxyTests
     private static readonly Uri Http = new("http://example.test/ip");
 
     [Fact]
-    public void Ignores_environment_proxies_when_the_switch_is_off()
+    public void Direct_mode_ignores_environment_and_system_proxies()
     {
-        var proxy = Create(useEnvironment: false, name => name == "HTTPS_PROXY" ? "http://127.0.0.1:10808" : null);
+        var proxy = Create(
+            ProxyMode.None,
+            name => name == "HTTPS_PROXY" ? "http://127.0.0.1:10808" : null,
+            new FixedProxy(new Uri("http://10.1.1.1:8888")));
 
         Assert.True(proxy.IsBypassed(Https));
         var text = string.Join('\n', proxy.Describe(Https));
-        Assert.Contains("выключен", text, StringComparison.Ordinal);
-        Assert.Contains("HTTPS_PROXY=http://127.0.0.1:10808", text, StringComparison.Ordinal);
+        Assert.Contains("без прокси", text, StringComparison.Ordinal);
         Assert.Contains("напрямую", text, StringComparison.Ordinal);
         Assert.DoesNotContain("сокет откроется к прокси", text, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Uses_https_proxy_for_https_when_the_switch_is_on()
+    public void Environment_mode_prefers_https_proxy_and_shows_the_variables()
     {
-        var proxy = Create(useEnvironment: true, name => name switch
+        var proxy = Create(ProxyMode.Environment, name => name switch
         {
             "HTTPS_PROXY" => "http://user:secret@127.0.0.1:10808",
             "HTTP_PROXY" => "http://10.0.0.1:8080",
@@ -32,19 +34,40 @@ public class OptionalEnvironmentProxyTests
         });
 
         Assert.False(proxy.IsBypassed(Https));
-        Assert.Equal("127.0.0.1", proxy.GetProxy(Https)!.Host);
+        var httpsProxy = proxy.GetProxy(Https);
+        Assert.Equal("127.0.0.1", httpsProxy!.Host);
+        Assert.Equal("user", ((NetworkCredential)proxy.Credentials!).UserName);
         Assert.Equal("10.0.0.1", proxy.GetProxy(Http)!.Host);
 
-        var text = string.Join('\n', proxy.Describe(Https));
-        Assert.Contains("включён", text, StringComparison.Ordinal);
+        var text = proxy.ReferenceText(Https);
+        Assert.Contains("HTTP_PROXY: http://10.0.0.1:8080", text, StringComparison.Ordinal);
         Assert.Contains("127.0.0.1:10808", text, StringComparison.Ordinal);
+        Assert.Contains("ALL_PROXY: не задана", text, StringComparison.Ordinal);
         Assert.DoesNotContain("secret", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Environment_mode_uses_http_proxy_for_https_when_https_proxy_is_absent()
+    {
+        var proxy = Create(ProxyMode.Environment, name => name == "HTTP_PROXY" ? "http://10.0.0.1:8080" : null);
+
+        Assert.Equal("10.0.0.1", proxy.GetProxy(Https)!.Host);
+        Assert.Equal(8080, proxy.GetProxy(Https)!.Port);
+    }
+
+    [Fact]
+    public void Environment_mode_does_not_fall_back_to_the_system_proxy()
+    {
+        var proxy = Create(ProxyMode.Environment, _ => null, new FixedProxy(new Uri("http://10.1.1.1:8888")));
+
+        Assert.True(proxy.IsBypassed(Https));
+        Assert.Contains("не заданы", string.Join('\n', proxy.Describe(Https)), StringComparison.Ordinal);
     }
 
     [Fact]
     public void Falls_back_to_all_proxy_and_honors_no_proxy()
     {
-        var proxy = Create(useEnvironment: true, name => name switch
+        var proxy = Create(ProxyMode.Environment, name => name switch
         {
             "ALL_PROXY" => "127.0.0.1:10808",
             "NO_PROXY" => "localhost, api.ipify.org",
@@ -54,39 +77,73 @@ public class OptionalEnvironmentProxyTests
         Assert.True(proxy.IsBypassed(Https));
         Assert.False(proxy.IsBypassed(new Uri("https://ifconfig.me/ip")));
         Assert.Equal(10808, proxy.GetProxy(new Uri("https://ifconfig.me/ip"))!.Port);
+        Assert.Contains("NO_PROXY: localhost, api.ipify.org", proxy.ReferenceText(Https), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Uses_the_system_proxy_when_variables_are_off()
+    public void System_mode_uses_the_system_proxy_and_ignores_variables()
     {
-        var system = new FixedProxy(new Uri("http://10.1.1.1:8888"));
         var proxy = new OptionalEnvironmentProxy
         {
-            UseEnvironmentVariables = false,
-            UseSystemProxy = true,
+            Mode = ProxyMode.System,
             EnvironmentReader = name => name == "HTTPS_PROXY" ? "http://127.0.0.1:10808" : null,
-            SystemProxy = system,
+            SystemProxy = new FixedProxy(new Uri("http://10.1.1.1:8888")),
         };
 
         Assert.Equal("10.1.1.1", proxy.GetProxy(Https)!.Host);
+        Assert.Equal("http://10.1.1.1:8888/", proxy.ReferenceText(Https));
         Assert.Contains("системный прокси Windows", string.Join('\n', proxy.Describe(Https)), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Ignores_the_system_proxy_when_its_switch_is_off()
+    public void System_mode_reports_when_windows_has_no_proxy()
     {
         var proxy = new OptionalEnvironmentProxy
         {
-            UseEnvironmentVariables = false,
-            UseSystemProxy = false,
+            Mode = ProxyMode.System,
             EnvironmentReader = _ => null,
-            SystemProxy = new FixedProxy(new Uri("http://127.0.0.1:10808")),
+            SystemProxy = DirectProxy.Instance,
         };
 
         Assert.True(proxy.IsBypassed(Https));
+        Assert.Equal("системный прокси не задан", proxy.ReferenceText(Https));
+    }
+
+    [Fact]
+    public void Custom_mode_uses_the_saved_address()
+    {
+        var proxy = new OptionalEnvironmentProxy
+        {
+            Mode = ProxyMode.Custom,
+            CustomProxy = "http://user:secret@10.2.2.2:9090",
+            EnvironmentReader = name => name == "HTTPS_PROXY" ? "http://127.0.0.1:10808" : null,
+            SystemProxy = new FixedProxy(new Uri("http://10.1.1.1:8888")),
+        };
+
+        Assert.True(proxy.TryValidate(out _));
+        Assert.Equal("10.2.2.2", proxy.GetProxy(Https)!.Host);
+        Assert.Equal(9090, proxy.GetProxy(Https)!.Port);
         var text = string.Join('\n', proxy.Describe(Https));
-        Assert.Contains("Системный прокси»: выключен", text, StringComparison.Ordinal);
-        Assert.Contains("напрямую", text, StringComparison.Ordinal);
+        Assert.Contains("10.2.2.2:9090", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("127.0.0.1:10808", text, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("", "не введён")]
+    [InlineData("   ", "не введён")]
+    [InlineData("://", "не распознан")]
+    public void Custom_mode_rejects_an_unusable_address(string value, string expected)
+    {
+        var proxy = new OptionalEnvironmentProxy
+        {
+            Mode = ProxyMode.Custom,
+            CustomProxy = value,
+        };
+
+        Assert.False(proxy.TryValidate(out var error));
+        Assert.Contains(expected, error, StringComparison.Ordinal);
+        Assert.True(proxy.IsBypassed(Https));
     }
 
     [Theory]
@@ -102,13 +159,29 @@ public class OptionalEnvironmentProxyTests
         Assert.Equal(port, uri.Port);
     }
 
-    private static OptionalEnvironmentProxy Create(bool useEnvironment, Func<string, string?> environment)
+    [Theory]
+    [InlineData(false, ProxyMode.None, true, false, ProxyMode.Environment)]
+    [InlineData(false, ProxyMode.None, false, true, ProxyMode.System)]
+    [InlineData(false, ProxyMode.None, false, false, ProxyMode.None)]
+    [InlineData(true, ProxyMode.Custom, true, true, ProxyMode.Custom)]
+    [InlineData(true, ProxyMode.None, true, false, ProxyMode.None)]
+    public void Migrates_the_old_checkboxes_until_a_choice_is_saved(
+        bool saved,
+        ProxyMode current,
+        bool environment,
+        bool system,
+        ProxyMode expected)
+    {
+        Assert.Equal(expected, ProxyModeMigration.Resolve(saved, current, environment, system));
+    }
+
+    private static OptionalEnvironmentProxy Create(ProxyMode mode, Func<string, string?> environment, IWebProxy? system = null)
     {
         return new OptionalEnvironmentProxy
         {
-            UseEnvironmentVariables = useEnvironment,
+            Mode = mode,
             EnvironmentReader = environment,
-            SystemProxy = DirectProxy.Instance,
+            SystemProxy = system ?? DirectProxy.Instance,
         };
     }
 

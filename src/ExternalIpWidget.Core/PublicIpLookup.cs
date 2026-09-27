@@ -45,7 +45,7 @@ public sealed class PublicIpLookup
 
     public static HttpClient CreateHttpClient(OptionalEnvironmentProxy? proxy = null)
     {
-        proxy ??= new OptionalEnvironmentProxy { UseEnvironmentVariables = false };
+        proxy ??= new OptionalEnvironmentProxy { Mode = ProxyMode.None };
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = true,
@@ -79,6 +79,11 @@ public sealed class PublicIpLookup
         {
             foreach (var line in _environmentProxy.Describe(sample))
                 Note(trace, line);
+            if (!_environmentProxy.TryValidate(out var proxyError))
+            {
+                Note(trace, proxyError);
+                throw new PublicIpLookupException(proxyError, attempts, null);
+            }
         }
 
         foreach (var provider in _providers)
