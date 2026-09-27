@@ -4,13 +4,13 @@ using System.Runtime.Versioning;
 namespace ExternalIpWidget.Core;
 
 /// <summary>
-/// Прокси для HttpClient. Переменные окружения и системный прокси Windows используются только если это включено.
+/// Прокси для HttpClient. Какой источник использовать, задаёт <see cref="Mode"/>.
 /// </summary>
 public sealed class OptionalEnvironmentProxy : IWebProxy
 {
-    public bool UseEnvironmentVariables { get; set; }
+    public ProxyMode Mode { get; set; }
 
-    public bool UseSystemProxy { get; set; }
+    public string? CustomProxy { get; set; }
 
     public Func<string, string?> EnvironmentReader { get; init; } = Environment.GetEnvironmentVariable;
 
@@ -21,6 +21,7 @@ public sealed class OptionalEnvironmentProxy : IWebProxy
     public Uri? GetProxy(Uri destination)
     {
         var choice = Choose(destination);
+        ApplyCredentials(choice.Direct ? null : choice.Proxy);
         return choice.Direct ? destination : choice.Proxy;
     }
 
@@ -29,24 +30,56 @@ public sealed class OptionalEnvironmentProxy : IWebProxy
         return Choose(host).Direct;
     }
 
+    public bool TryValidate(out string error)
+    {
+        if (Mode != ProxyMode.Custom)
+        {
+            error = "";
+            return true;
+        }
+
+        if (EnvironmentProxyRules.Parse(CustomProxy) is not null)
+        {
+            error = "";
+            return true;
+        }
+
+        error = string.IsNullOrWhiteSpace(CustomProxy)
+            ? "Заданный прокси не введён. Укажите адрес вида хост:порт."
+            : "Заданный прокси не распознан. Укажите адрес вида хост:порт.";
+        return false;
+    }
+
+    public string ReferenceText(Uri destination)
+    {
+        return Mode switch
+        {
+            ProxyMode.Environment => string.Join(Environment.NewLine, VariableLines()),
+            ProxyMode.System => SystemReference(destination),
+            _ => "",
+        };
+    }
+
     public IReadOnlyList<string> Describe(Uri destination)
     {
-        var lines = new List<string>
+        var lines = new List<string> { ModeLine() };
+        if (Mode == ProxyMode.Environment)
+            lines.AddRange(VariableLines());
+        if (Mode == ProxyMode.System)
         {
-            UseEnvironmentVariables
-                ? "флажок «Прокси HTTP_PROXY»: включён. Используются HTTP_PROXY, HTTPS_PROXY и ALL_PROXY."
-                : "флажок «Прокси HTTP_PROXY»: выключен. HTTP_PROXY, HTTPS_PROXY и ALL_PROXY не используются.",
-            UseSystemProxy
-                ? "флажок «Системный прокси»: включён. Используются настройки прокси Windows."
-                : "флажок «Системный прокси»: выключен. Настройки прокси Windows не используются.",
-        };
+            lines.Add(SystemReference(destination));
+            lines.AddRange(ProxyDiagnostics.ReadWindowsInternetSettings());
+        }
 
-        foreach (var name in new[] { "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY" })
+        if (Mode == ProxyMode.Custom)
         {
-            var value = ReadEither(EnvironmentReader, name.ToLowerInvariant(), name);
-            lines.Add(string.IsNullOrWhiteSpace(value)
-                ? $"переменная {name} не задана"
-                : $"переменная {name}={ProxyDiagnostics.Redact(value)}");
+            if (!TryValidate(out var error))
+            {
+                lines.Add(error);
+                return lines;
+            }
+
+            lines.Add("заданный прокси: " + ProxyDiagnostics.Redact(CustomProxy!.Trim()));
         }
 
         var choice = Choose(destination);
@@ -55,45 +88,97 @@ public sealed class OptionalEnvironmentProxy : IWebProxy
         else
             lines.Add($"сокет откроется к прокси {ProxyDiagnostics.Redact(choice.Proxy!.ToString())}, а не к {destination.Host}. Это не адрес сервиса. {choice.Reason}");
 
-        foreach (var line in ProxyDiagnostics.ReadWindowsInternetSettings())
-            lines.Add(line);
-
         return lines;
     }
 
     public ProxyChoice Choose(Uri destination)
     {
-        if (UseEnvironmentVariables
-            && EnvironmentProxyRules.TryGet(EnvironmentReader, destination, out var proxy, out var bypassed))
+        switch (Mode)
         {
-            if (bypassed)
-                return ProxyChoice.AsDirect("NO_PROXY исключает этот адрес");
-            return ProxyChoice.AsVia(proxy!, "адрес взят из HTTP_PROXY, HTTPS_PROXY или ALL_PROXY");
+            case ProxyMode.Environment:
+                if (!EnvironmentProxyRules.TryGet(EnvironmentReader, destination, out var proxy, out var bypassed))
+                    return ProxyChoice.AsDirect("выбрана переменная окружения, но HTTP_PROXY, HTTPS_PROXY и ALL_PROXY не заданы");
+                if (bypassed)
+                    return ProxyChoice.AsDirect("NO_PROXY исключает этот адрес");
+                return ProxyChoice.AsVia(proxy!, "адрес взят из HTTP_PROXY, HTTPS_PROXY или ALL_PROXY");
+
+            case ProxyMode.System:
+                if (SystemProxy.IsBypassed(destination))
+                    return ProxyChoice.AsDirect("выбран системный прокси, но в Windows он не задан");
+                var system = SystemProxy.GetProxy(destination);
+                if (system is null || SameEndpoint(system, destination))
+                    return ProxyChoice.AsDirect("выбран системный прокси, но в Windows он не задан");
+                return ProxyChoice.AsVia(system, "адрес взят из системного прокси Windows");
+
+            case ProxyMode.Custom:
+                var custom = EnvironmentProxyRules.Parse(CustomProxy);
+                if (custom is null)
+                    return ProxyChoice.AsDirect("заданный прокси пуст или не распознан");
+                return ProxyChoice.AsVia(custom, "адрес взят из заданного прокси");
+
+            default:
+                return ProxyChoice.AsDirect("выбрано «Без прокси», запрос идёт напрямую");
+        }
+    }
+
+    private string ModeLine()
+    {
+        return Mode switch
+        {
+            ProxyMode.Environment => "прокси: переменная окружения HTTP_PROXY. Для HTTPS сначала берётся HTTPS_PROXY, затем HTTP_PROXY, затем ALL_PROXY.",
+            ProxyMode.System => "прокси: системный прокси Windows.",
+            ProxyMode.Custom => "прокси: заданный адрес.",
+            _ => "прокси: без прокси. Запрос идёт напрямую.",
+        };
+    }
+
+    private string SystemReference(Uri destination)
+    {
+        try
+        {
+            if (SystemProxy.IsBypassed(destination))
+                return "системный прокси не задан";
+            var proxy = SystemProxy.GetProxy(destination);
+            if (proxy is null || SameEndpoint(proxy, destination))
+                return "системный прокси не задан";
+            return ProxyDiagnostics.Redact(proxy.ToString());
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return "системный прокси не прочитан: " + ex.GetType().Name;
+        }
+    }
+
+    private IEnumerable<string> VariableLines()
+    {
+        foreach (var name in new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY" })
+        {
+            var value = ReadEither(EnvironmentReader, name.ToLowerInvariant(), name);
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                if (name == "NO_PROXY")
+                    continue;
+                yield return $"{name}: не задана";
+                continue;
+            }
+
+            yield return $"{name}: {ProxyDiagnostics.Redact(value)}";
+        }
+    }
+
+    private void ApplyCredentials(Uri? proxy)
+    {
+        if (proxy is null || string.IsNullOrEmpty(proxy.UserInfo))
+        {
+            Credentials = null;
+            return;
         }
 
-        if (!UseSystemProxy)
-        {
-            var skipped = UseEnvironmentVariables
-                ? "переменные прокси не заданы, флажок системного прокси выключен"
-                : "флажки прокси выключены, запрос идёт напрямую";
-            return ProxyChoice.AsDirect(skipped);
-        }
-
-        if (SystemProxy.IsBypassed(destination))
-        {
-            return ProxyChoice.AsDirect("системный прокси включён, но в Windows он не задан");
-        }
-
-        var system = SystemProxy.GetProxy(destination);
-        if (system is null || SameEndpoint(system, destination))
-        {
-            return ProxyChoice.AsDirect("системный прокси включён, но в Windows он не задан");
-        }
-
-        var via = UseEnvironmentVariables
-            ? "переменные прокси не заданы, взят системный прокси Windows"
-            : "переменные прокси выключены, взят системный прокси Windows";
-        return ProxyChoice.AsVia(system, via);
+        var info = proxy.UserInfo;
+        var colon = info.IndexOf(':');
+        var user = Uri.UnescapeDataString(colon < 0 ? info : info[..colon]);
+        var password = colon < 0 ? "" : Uri.UnescapeDataString(info[(colon + 1)..]);
+        Credentials = new NetworkCredential(user, password);
     }
 
     private static string? ReadEither(Func<string, string?> read, string lower, string upper)
@@ -129,8 +214,8 @@ internal static class EnvironmentProxyRules
         proxy = destination.Scheme switch
         {
             "http" => http ?? all,
-            "https" => https ?? all,
-            _ => all,
+            "https" => https ?? http ?? all,
+            _ => all ?? http,
         };
         if (proxy is null)
         {
