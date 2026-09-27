@@ -51,7 +51,10 @@ public sealed class PublicIpLookup
             AllowAutoRedirect = true,
             MaxAutomaticRedirections = 3,
             AutomaticDecompression = DecompressionMethods.All,
-            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+            // Уже открытый сокет не переезжает в VPN. Каждая проверка открывает новое соединение
+            // и поэтому видит маршрут, который действует сейчас.
+            PooledConnectionLifetime = TimeSpan.Zero,
+            PooledConnectionIdleTimeout = TimeSpan.Zero,
             UseProxy = true,
             Proxy = proxy,
             // Сервис возвращает адрес того подключения, которое к нему пришло.
@@ -61,9 +64,12 @@ public sealed class PublicIpLookup
         var client = new HttpClient(handler)
         {
             Timeout = Timeout.InfiniteTimeSpan,
+            DefaultRequestVersion = HttpVersion.Version11,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
         };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("ExternalIpWidget/1.0");
         client.DefaultRequestHeaders.Accept.ParseAdd("text/plain");
+        client.DefaultRequestHeaders.ConnectionClose = true;
         return client;
     }
 
