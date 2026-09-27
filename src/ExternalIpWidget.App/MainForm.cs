@@ -24,6 +24,8 @@ public sealed class MainForm : Form
     private readonly Label _sourceLabel;
     private readonly Label _status;
     private readonly Label _versionLabel;
+    private readonly Label _copyrightLabel;
+    private readonly LinkLabel _repoLink;
     private readonly Label _proxyReference;
     private readonly Button _refreshButton;
     private readonly Button _copyButton;
@@ -119,6 +121,23 @@ public sealed class MainForm : Form
             ForeColor = Color.FromArgb(148, 163, 184),
             Margin = new Padding(0, 8, 0, 0),
         };
+        _copyrightLabel = new Label
+        {
+            Text = "© Владимир Гуменников",
+            AutoSize = true,
+            ForeColor = Color.FromArgb(148, 163, 184),
+            Margin = new Padding(0, 2, 0, 0),
+        };
+        _repoLink = new LinkLabel
+        {
+            Text = "github.com/vovainfo/ExternalIP",
+            AutoSize = true,
+            Margin = new Padding(0, 2, 0, 0),
+            LinkColor = Color.FromArgb(37, 99, 235),
+            ActiveLinkColor = Color.FromArgb(29, 78, 216),
+            LinkBehavior = LinkBehavior.HoverUnderline,
+        };
+        _repoLink.LinkClicked += (_, _) => OpenRepository();
         _refreshButton = CreateButton("Обновить", "Обновление…", primary: true);
         _copyButton = CreateButton("Копировать", "Скопировано", primary: false);
         _copyButton.Enabled = false;
@@ -283,6 +302,8 @@ public sealed class MainForm : Form
         root.Controls.Add(proxyBlock);
         root.Controls.Add(_status);
         root.Controls.Add(_versionLabel);
+        root.Controls.Add(_copyrightLabel);
+        root.Controls.Add(_repoLink);
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
         Controls.Add(root);
@@ -921,6 +942,21 @@ public sealed class MainForm : Form
             return;
 
         _proxyReference.Text = _environmentProxy.ReferenceText(new Uri("https://api.ipify.org/"));
+    }
+
+    private void OpenRepository()
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://github.com/vovainfo/ExternalIP/")
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            ShowStatus("Не удалось открыть ссылку.", error: true);
+        }
     }
 
     private static string AppVersion()
