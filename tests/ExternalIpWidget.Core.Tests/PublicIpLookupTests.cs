@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using ExternalIpWidget.Core;
 
 namespace ExternalIpWidget.Core.Tests;
@@ -13,7 +14,35 @@ public class PublicIpLookupTests
         {
             Assert.False(string.IsNullOrWhiteSpace(provider.Name));
             Assert.StartsWith("https://", provider.Url, StringComparison.Ordinal);
+            Assert.DoesNotContain("api64", provider.Url, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("ipv6", provider.Url, StringComparison.OrdinalIgnoreCase);
         });
+        Assert.Contains(PublicIpLookup.DefaultProviders, provider => provider.Url.Contains("ipv4.icanhazip.com", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Skips_an_ipv6_answer_and_keeps_looking_for_ipv4()
+    {
+        var handler = new DelegateHandler((request, _) =>
+        {
+            var body = request.RequestUri!.AbsolutePath.EndsWith("/v6", StringComparison.Ordinal)
+                ? "2001:db8::44"
+                : "203.0.113.44";
+            return Task.FromResult(Text(body));
+        });
+
+        using var http = Client(handler);
+        var lookup = new PublicIpLookup(http,
+        [
+            new IpProvider("v6", "https://example.test/v6"),
+            new IpProvider("v4", "https://example.test/v4"),
+        ]);
+
+        var result = await lookup.GetAsync();
+
+        Assert.Equal("203.0.113.44", result.Address);
+        Assert.Equal("v4", result.ProviderName);
+        Assert.Equal(AddressFamily.InterNetwork, IPAddress.Parse(result.Address).AddressFamily);
     }
 
     [Fact]

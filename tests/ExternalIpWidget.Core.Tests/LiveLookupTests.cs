@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using ExternalIpWidget.Core;
 
 namespace ExternalIpWidget.Core.Tests;
@@ -17,6 +18,7 @@ public class LiveLookupTests
         Assert.Equal(parsed, result.Address);
         Assert.Contains(PublicIpLookup.DefaultProviders, provider => provider.Name == result.ProviderName);
         Assert.False(IpPrivacy.IsNonPublic(result.Address));
+        Assert.Equal(AddressFamily.InterNetwork, IPAddress.Parse(result.Address).AddressFamily);
 
         var nic = LocalNicAddress.TryGetOutbound();
         if (nic is not null && IpPrivacy.IsNonPublic(nic))

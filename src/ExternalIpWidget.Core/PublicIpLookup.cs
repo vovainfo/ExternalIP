@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 
 namespace ExternalIpWidget.Core;
 
@@ -15,7 +16,6 @@ public sealed class PublicIpLookup
         new("AWS checkip", "https://checkip.amazonaws.com"),
         new("ifconfig.me", "https://ifconfig.me/ip"),
         new("ipinfo", "https://ipinfo.io/ip"),
-        new("ipify (IPv6 или IPv4)", "https://api64.ipify.org"),
     ];
 
     private readonly HttpClient _http;
@@ -45,6 +45,9 @@ public sealed class PublicIpLookup
             MaxAutomaticRedirections = 3,
             AutomaticDecompression = DecompressionMethods.All,
             PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+            // Сервис возвращает адрес того подключения, которое к нему пришло.
+            // Сокет только IPv4, поэтому в ответе внешний IPv4, а не IPv6.
+            ConnectCallback = ConnectOverIPv4Async,
         };
         var client = new HttpClient(handler)
         {
@@ -99,7 +102,36 @@ public sealed class PublicIpLookup
         if (body.Length > 512)
             throw new FormatException("Слишком длинный ответ.");
 
-        return IpAddressText.Parse(body);
+        var address = IpAddressText.Parse(body);
+        if (!IPAddress.TryParse(address, out var ip))
+            throw new FormatException("Ответ сервиса не содержит IP-адрес.");
+        if (ip.IsIPv4MappedToIPv6)
+            ip = ip.MapToIPv4();
+        if (ip.AddressFamily != AddressFamily.InterNetwork)
+            throw new FormatException("Сервис вернул IPv6. Нужен IPv4.");
+
+        return ip.ToString();
+    }
+
+    private static async ValueTask<Stream> ConnectOverIPv4Async(
+        SocketsHttpConnectionContext context,
+        CancellationToken cancellationToken)
+    {
+        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
+        {
+            NoDelay = true,
+        };
+
+        try
+        {
+            await socket.ConnectAsync(context.DnsEndPoint, cancellationToken).ConfigureAwait(false);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
     }
 
     private static bool IsProviderFailure(Exception ex, CancellationToken cancellationToken)
