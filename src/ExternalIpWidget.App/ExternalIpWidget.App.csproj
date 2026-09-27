@@ -10,7 +10,7 @@
     <RootNamespace>ExternalIpWidget</RootNamespace>
     <AssemblyName>ExternalIpWidget</AssemblyName>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>1.2.13</Version>
+    <Version>1.2.14</Version>
     <Product>External IP</Product>
     <AssemblyTitle>External IP</AssemblyTitle>
     <Description>Виджет внешнего IP-адреса. Адрес запрашивается у внешнего сервиса и не берётся с сетевой карты.</Description>

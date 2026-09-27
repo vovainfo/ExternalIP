@@ -33,6 +33,7 @@ public sealed class MainForm : Form
     private readonly ComboBox _proxyMode;
     private readonly TextBox _customProxy;
     private readonly FlowLayoutPanel _customProxyRow;
+    private readonly Label _customProxyHint;
     private readonly RequestLogForm _log = new();
     private readonly TaskbarIpBand _taskbarBand;
     private readonly NumericUpDown _interval;
@@ -85,6 +86,7 @@ public sealed class MainForm : Form
             BackColor = Color.White,
             Margin = new Padding(0, 2, 0, 0),
             Padding = new Padding(6, 2, 6, 2),
+            MaximumSize = new Size(400, 0),
         };
         _geoLabel = new Label
         {
@@ -109,10 +111,10 @@ public sealed class MainForm : Form
             Margin = new Padding(0, 10, 0, 0),
             Text = "Ожидание ответа сервиса",
         };
-        _refreshButton = CreateButton("Обновить", primary: true);
-        _copyButton = CreateButton("Копировать", primary: false);
+        _refreshButton = CreateButton("Обновить", "Обновление…", primary: true);
+        _copyButton = CreateButton("Копировать", "Скопировано", primary: false);
         _copyButton.Enabled = false;
-        _logButton = CreateButton("Журнал запросов", primary: false);
+        _logButton = CreateButton("Журнал запросов", "Журнал запросов", primary: false);
         _alwaysOnTop = new CheckBox
         {
             Text = "Поверх всех окон",
@@ -166,6 +168,15 @@ public sealed class MainForm : Form
             ForeColor = Color.FromArgb(71, 85, 105),
         });
         _customProxyRow.Controls.Add(_customProxy);
+        _customProxyHint = new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(436, 0),
+            ForeColor = Color.FromArgb(100, 116, 139),
+            Margin = new Padding(0, 4, 0, 0),
+            Visible = false,
+            Text = "Формат: хост:порт или http://хост:порт. Например, 127.0.0.1:8080.",
+        };
         _interval = new NumericUpDown
         {
             Minimum = 1,
@@ -195,8 +206,9 @@ public sealed class MainForm : Form
         var buttons = new FlowLayoutPanel
         {
             AutoSize = true,
-            WrapContents = true,
-            MaximumSize = new Size(436, 0),
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = false,
+            FlowDirection = FlowDirection.LeftToRight,
             Margin = new Padding(0, 12, 0, 0),
         };
         buttons.Controls.Add(_refreshButton);
@@ -247,6 +259,7 @@ public sealed class MainForm : Form
         proxyBlock.Controls.Add(proxyRow);
         proxyBlock.Controls.Add(_proxyReference);
         proxyBlock.Controls.Add(_customProxyRow);
+        proxyBlock.Controls.Add(_customProxyHint);
 
         var root = new FlowLayoutPanel
         {
@@ -272,7 +285,7 @@ public sealed class MainForm : Form
         _toolTip.SetToolTip(_showOnTaskbar, "Показывать внешний IP на панели задач, слева от часов. Плашку можно перетащить.");
         _toolTip.SetToolTip(_startWithWindows, "Добавить ярлык в папку автозагрузки Windows.");
         _toolTip.SetToolTip(_proxyMode, "Как виджет подключается к сервисам при проверке адреса.");
-        _toolTip.SetToolTip(_customProxy, "Адрес своего прокси, например 127.0.0.1:8080 или http://proxy:8080.");
+        _toolTip.SetToolTip(_customProxy, "Хост и порт: 127.0.0.1:8080 или http://хост:порт.");
         _toolTip.SetToolTip(_interval, "Как часто снова спрашивать внешний сервис.");
         _toolTip.SetToolTip(_logButton, "Открыть журнал последнего запроса: прокси, DNS, подключение и ответ сервиса.");
 
@@ -419,26 +432,30 @@ public sealed class MainForm : Form
         }
     }
 
-    private static Button CreateButton(string text, bool primary)
+    private Button CreateButton(string text, string widestText, bool primary)
     {
+        const int height = 36;
         var button = new Button
         {
             Text = text,
-            AutoSize = true,
-            MinimumSize = new Size(120, 34),
-            Padding = new Padding(12, 4, 12, 4),
+            AutoSize = false,
+            Font = Font,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Padding = new Padding(12, 0, 12, 0),
             Margin = new Padding(0, 0, 8, 0),
             FlatStyle = FlatStyle.Flat,
             Cursor = Cursors.Hand,
             UseVisualStyleBackColor = false,
+            UseCompatibleTextRendering = false,
         };
-        button.FlatAppearance.BorderSize = primary ? 0 : 1;
+        button.FlatAppearance.BorderSize = 1;
         if (primary)
         {
             button.BackColor = Color.FromArgb(37, 99, 235);
             button.ForeColor = Color.White;
             button.FlatAppearance.BorderColor = Color.FromArgb(37, 99, 235);
             button.FlatAppearance.MouseOverBackColor = Color.FromArgb(29, 78, 216);
+            button.FlatAppearance.MouseDownBackColor = Color.FromArgb(29, 78, 216);
         }
         else
         {
@@ -446,8 +463,14 @@ public sealed class MainForm : Form
             button.ForeColor = Color.FromArgb(15, 23, 42);
             button.FlatAppearance.BorderColor = Color.FromArgb(203, 213, 225);
             button.FlatAppearance.MouseOverBackColor = Color.FromArgb(241, 245, 249);
+            button.FlatAppearance.MouseDownBackColor = Color.FromArgb(226, 232, 240);
         }
 
+        var textWidth = TextRenderer.MeasureText(widestText, button.Font).Width;
+        var width = Math.Max(120, textWidth + button.Padding.Horizontal + 8);
+        button.Size = new Size(width, height);
+        button.MinimumSize = new Size(width, height);
+        button.MaximumSize = new Size(width, height);
         return button;
     }
 
@@ -699,28 +722,23 @@ public sealed class MainForm : Form
     private void ShowLookupError(PublicIpLookupException ex)
     {
         var details = ex.Attempts.Count == 0 ? ex.Message : string.Join(Environment.NewLine, ex.Attempts);
+        _currentAddress = null;
+        _copyButton.Enabled = false;
+        _ipLabel.Text = "Не удалось обновить адрес";
+        _ipLabel.Font = _ipFontCompact;
+        ApplyAddressHighlight(false);
+        _sourceLabel.Text = ex.Attempts.Count == 0
+            ? "Проверка не выполнена"
+            : "Внешний сервис не ответил";
+        _geoLabel.Text = "Местоположение не определено";
+        _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
+        Text = "Не удалось обновить адрес — External IP";
+        SetTrayText("External IP: не удалось обновить адрес");
+        _taskbarBand.SetRussia(false);
+        _taskbarBand.SetAddress("Error");
         _toolTip.SetToolTip(_status, details);
-        if (_currentAddress is null)
-        {
-            _ipLabel.Text = "нет данных";
-            _ipLabel.Font = _ipFontCompact;
-            _sourceLabel.Text = ex.Attempts.Count == 0
-                ? "Проверка не выполнена"
-                : "Внешний сервис не ответил";
-            _geoLabel.Text = "Местоположение не определено";
-            _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
-            SetTrayText("External IP: нет данных");
-            ApplyAddressHighlight(false);
-            _taskbarBand.SetAddress(null);
-            ShowStatus(
-                ex.Attempts.Count == 0
-                    ? ex.Message
-                    : "Не удалось определить внешний IP. Проверьте интернет и нажмите «Обновить».",
-                error: true);
-            return;
-        }
-
-        ShowStatus("Не удалось обновить адрес. На экране последний успешный результат.", error: true);
+        _toolTip.SetToolTip(_ipLabel, details);
+        ShowStatus("Не удалось обновить адрес", error: true);
     }
 
     private async void BeginCopy()
@@ -886,7 +904,9 @@ public sealed class MainForm : Form
     {
         var mode = SelectedProxyMode();
         var showReference = mode is ProxyMode.Environment or ProxyMode.System;
-        _customProxyRow.Visible = mode == ProxyMode.Custom;
+        var custom = mode == ProxyMode.Custom;
+        _customProxyRow.Visible = custom;
+        _customProxyHint.Visible = custom;
         _proxyReference.Visible = showReference;
         if (!showReference)
             return;
