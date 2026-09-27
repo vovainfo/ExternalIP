@@ -23,6 +23,7 @@ public sealed class MainForm : Form
     private readonly Label _geoLabel;
     private readonly Label _sourceLabel;
     private readonly Label _status;
+    private readonly Label _versionLabel;
     private readonly Label _proxyReference;
     private readonly Button _refreshButton;
     private readonly Button _copyButton;
@@ -66,7 +67,7 @@ public sealed class MainForm : Form
         _eyebrowFont = CreateUiFont(Font.FontFamily.Name, 8.5f, FontStyle.Bold);
         _geoFont = CreateUiFont(Font.FontFamily.Name, 11f, FontStyle.Regular);
 
-        Text = "External IP";
+        Text = WindowTitle();
         BackColor = Color.FromArgb(244, 247, 251);
         ForeColor = Color.FromArgb(15, 23, 42);
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -110,6 +111,13 @@ public sealed class MainForm : Form
             ForeColor = Color.FromArgb(100, 116, 139),
             Margin = new Padding(0, 10, 0, 0),
             Text = "Ожидание ответа сервиса",
+        };
+        _versionLabel = new Label
+        {
+            Text = "Версия " + AppVersion(),
+            AutoSize = true,
+            ForeColor = Color.FromArgb(148, 163, 184),
+            Margin = new Padding(0, 8, 0, 0),
         };
         _refreshButton = CreateButton("Обновить", "Обновление…", primary: true);
         _copyButton = CreateButton("Копировать", "Скопировано", primary: false);
@@ -274,6 +282,7 @@ public sealed class MainForm : Form
         root.Controls.Add(options);
         root.Controls.Add(proxyBlock);
         root.Controls.Add(_status);
+        root.Controls.Add(_versionLabel);
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
         Controls.Add(root);
@@ -678,7 +687,7 @@ public sealed class MainForm : Form
         _copyButton.Enabled = true;
         _geoLabel.Text = "Определение местоположения…";
         _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
-        Text = $"{result.Address} — External IP";
+        Text = WindowTitle(result.Address);
         SetTrayText("External IP: " + result.Address);
         _taskbarBand.SetAddress(result.Address);
         ShowStatus($"Обновлено в {result.RetrievedAt.LocalDateTime:HH:mm:ss}", error: false);
@@ -732,7 +741,7 @@ public sealed class MainForm : Form
             : "Внешний сервис не ответил";
         _geoLabel.Text = "Местоположение не определено";
         _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
-        Text = "Не удалось обновить адрес — External IP";
+        Text = WindowTitle("Не удалось обновить адрес");
         SetTrayText("External IP: не удалось обновить адрес");
         _taskbarBand.SetRussia(false);
         _taskbarBand.SetAddress("Error");
@@ -912,6 +921,22 @@ public sealed class MainForm : Form
             return;
 
         _proxyReference.Text = _environmentProxy.ReferenceText(new Uri("https://api.ipify.org/"));
+    }
+
+    private static string AppVersion()
+    {
+        var informational = Application.ProductVersion;
+        if (string.IsNullOrWhiteSpace(informational))
+            return "";
+        var plus = informational.IndexOf('+');
+        return plus >= 0 ? informational[..plus] : informational;
+    }
+
+    private static string WindowTitle(string? prefix = null)
+    {
+        var version = AppVersion();
+        var name = string.IsNullOrEmpty(version) ? "External IP" : "External IP " + version;
+        return string.IsNullOrEmpty(prefix) ? name : prefix + " — " + name;
     }
 
     private void ShowStatus(string text, bool error)
