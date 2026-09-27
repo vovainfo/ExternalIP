@@ -27,6 +27,15 @@ public class AddressLinesTests
     }
 
     [Fact]
+    public void Keeps_the_taskbar_error_word_on_one_line()
+    {
+        var lines = AddressLines.From("Error");
+
+        Assert.Equal("Error", lines.Top);
+        Assert.False(lines.HasSecondLine);
+    }
+
+    [Fact]
     public void Splits_an_ipv6_address_so_the_label_stays_short()
     {
         var lines = AddressLines.From("2001:db8::10");
