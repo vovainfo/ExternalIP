@@ -4,7 +4,8 @@ namespace ExternalIpWidget;
 
 public sealed class MainForm : Form
 {
-    private readonly HttpClient _http = PublicIpLookup.CreateHttpClient();
+    private readonly OptionalEnvironmentProxy _environmentProxy;
+    private readonly HttpClient _http;
     private readonly PublicIpLookup _lookup;
     private readonly GeoIpLookup _geo;
     private readonly WidgetSettings _settings = SettingsStore.Load();
@@ -33,6 +34,7 @@ public sealed class MainForm : Form
     private readonly CheckBox _alwaysOnTop;
     private readonly CheckBox _showOnTaskbar;
     private readonly CheckBox _startWithWindows;
+    private readonly CheckBox _useEnvironmentProxy;
     private readonly TaskbarIpBand _taskbarBand;
     private readonly NumericUpDown _interval;
 
@@ -49,7 +51,12 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        _lookup = new PublicIpLookup(_http);
+        _environmentProxy = new OptionalEnvironmentProxy
+        {
+            UseEnvironmentVariables = _settings.UseEnvironmentProxy,
+        };
+        _http = PublicIpLookup.CreateHttpClient(_environmentProxy);
+        _lookup = new PublicIpLookup(_http, environmentProxy: _environmentProxy);
         _geo = new GeoIpLookup(_http);
         Font = CreateUiFont("Segoe UI", 9.75f, FontStyle.Regular);
         _ipFontLarge = CreateUiFont(Font.FontFamily.Name, 22f, FontStyle.Bold);
@@ -155,6 +162,12 @@ public sealed class MainForm : Form
             AutoSize = true,
             Margin = new Padding(0, 6, 16, 0),
         };
+        _useEnvironmentProxy = new CheckBox
+        {
+            Text = "Прокси HTTP_PROXY",
+            AutoSize = true,
+            Margin = new Padding(0, 6, 16, 0),
+        };
         _interval = new NumericUpDown
         {
             Minimum = 1,
@@ -212,6 +225,7 @@ public sealed class MainForm : Form
         options.Controls.Add(_alwaysOnTop);
         options.Controls.Add(_showOnTaskbar);
         options.Controls.Add(_startWithWindows);
+        options.Controls.Add(_useEnvironmentProxy);
         options.Controls.Add(new Label
         {
             Text = "Интервал, мин",
@@ -249,6 +263,7 @@ public sealed class MainForm : Form
         _toolTip.SetToolTip(_alwaysOnTop, "Держать окно виджета поверх остальных.");
         _toolTip.SetToolTip(_showOnTaskbar, "Показывать внешний IP на панели задач, слева от часов. Плашку можно перетащить.");
         _toolTip.SetToolTip(_startWithWindows, "Добавить ярлык в папку автозагрузки Windows.");
+        _toolTip.SetToolTip(_useEnvironmentProxy, "Использовать HTTP_PROXY, HTTPS_PROXY и ALL_PROXY. Выключено — эти переменные не влияют на запрос.");
         _toolTip.SetToolTip(_interval, "Как часто снова спрашивать внешний сервис.");
         _toolTip.SetToolTip(_traceBox, "Что произошло при запросе внешнего IP: DNS, подключение, ответ сервиса.");
         _toolTip.SetToolTip(_copyTraceButton, "Скопировать журнал, чтобы его можно было разобрать.");
@@ -500,6 +515,16 @@ public sealed class MainForm : Form
             ScheduleSave();
         };
         _startWithWindows.CheckedChanged += (_, _) => ToggleStartup();
+        _useEnvironmentProxy.CheckedChanged += (_, _) =>
+        {
+            _environmentProxy.UseEnvironmentVariables = _useEnvironmentProxy.Checked;
+            if (_loading)
+                return;
+            _settings.UseEnvironmentProxy = _useEnvironmentProxy.Checked;
+            ScheduleSave();
+            if (!_busy)
+                BeginRefresh();
+        };
         _interval.ValueChanged += (_, _) =>
         {
             if (_loading)
@@ -522,6 +547,8 @@ public sealed class MainForm : Form
         _alwaysOnTop.Checked = _settings.AlwaysOnTop;
         TopMost = _settings.AlwaysOnTop;
         _showOnTaskbar.Checked = _settings.ShowOnTaskbar;
+        _useEnvironmentProxy.Checked = _settings.UseEnvironmentProxy;
+        _environmentProxy.UseEnvironmentVariables = _settings.UseEnvironmentProxy;
         _interval.Value = Math.Clamp(_settings.RefreshMinutes, (int)_interval.Minimum, (int)_interval.Maximum);
         _startWithWindows.Checked = StartupShortcut.Exists();
         _settings.StartWithWindows = _startWithWindows.Checked;

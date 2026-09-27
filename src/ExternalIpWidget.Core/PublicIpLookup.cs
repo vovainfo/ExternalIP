@@ -24,11 +24,13 @@ public sealed class PublicIpLookup
     private readonly HttpClient _http;
     private readonly IReadOnlyList<IpProvider> _providers;
     private readonly TimeSpan _perProviderTimeout;
+    private readonly OptionalEnvironmentProxy? _environmentProxy;
 
     public PublicIpLookup(
         HttpClient httpClient,
         IReadOnlyList<IpProvider>? providers = null,
-        TimeSpan? perProviderTimeout = null)
+        TimeSpan? perProviderTimeout = null,
+        OptionalEnvironmentProxy? environmentProxy = null)
     {
         _http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _providers = providers ?? DefaultProviders;
@@ -38,16 +40,20 @@ public sealed class PublicIpLookup
         _perProviderTimeout = perProviderTimeout ?? TimeSpan.FromSeconds(6);
         if (_perProviderTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(perProviderTimeout));
+        _environmentProxy = environmentProxy;
     }
 
-    public static HttpClient CreateHttpClient()
+    public static HttpClient CreateHttpClient(OptionalEnvironmentProxy? proxy = null)
     {
+        proxy ??= new OptionalEnvironmentProxy { UseEnvironmentVariables = false };
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = true,
             MaxAutomaticRedirections = 3,
             AutomaticDecompression = DecompressionMethods.All,
             PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+            UseProxy = true,
+            Proxy = proxy,
             // Сервис возвращает адрес того подключения, которое к нему пришло.
             // Сокет только IPv4, поэтому в ответе внешний IPv4, а не IPv6.
             ConnectCallback = ConnectOverIPv4Async,
@@ -69,9 +75,9 @@ public sealed class PublicIpLookup
         var attempts = new List<string>();
         Exception? last = null;
         Note(trace, $"старт, сервисов {_providers.Count}, таймаут {_perProviderTimeout.TotalSeconds:0} с, соединение только IPv4");
-        if (Uri.TryCreate(_providers[0].Url, UriKind.Absolute, out var sample))
+        if (_environmentProxy is not null && Uri.TryCreate(_providers[0].Url, UriKind.Absolute, out var sample))
         {
-            foreach (var line in ProxyDiagnostics.Explain(sample, HttpClient.DefaultProxy))
+            foreach (var line in _environmentProxy.Describe(sample))
                 Note(trace, line);
         }
 

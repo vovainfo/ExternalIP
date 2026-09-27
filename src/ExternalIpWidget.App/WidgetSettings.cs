@@ -16,6 +16,8 @@ public sealed class WidgetSettings
 
     public bool ShowOnTaskbar { get; set; } = true;
 
+    public bool UseEnvironmentProxy { get; set; }
+
     public int TaskbarNudge { get; set; }
 
     public void Normalize()

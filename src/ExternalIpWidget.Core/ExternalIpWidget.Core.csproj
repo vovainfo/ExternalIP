@@ -8,4 +8,8 @@
     <Description>Определение внешнего IP через сторонние сервисы, без чтения адреса сетевой карты.</Description>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="ExternalIpWidget.Core.Tests" />
+  </ItemGroup>
+
 </Project>
