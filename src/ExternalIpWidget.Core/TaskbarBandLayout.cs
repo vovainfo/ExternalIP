@@ -36,7 +36,7 @@ public static class TaskbarBandLayout
         var trayOnBar = tray is PixelRect area && area.Intersects(taskbar) ? area : (PixelRect?)null;
 
         if (edge is DockEdge.Top or DockEdge.Bottom)
-            return TryHorizontal(taskbar, trayOnBar, textWidth, textHeight, nudge, out bounds);
+            return TryHorizontal(taskbar, trayOnBar, edge, textWidth, textHeight, nudge, out bounds);
 
         return TryVertical(taskbar, trayOnBar, edge, textWidth, textHeight, nudge, out bounds);
     }
@@ -44,12 +44,13 @@ public static class TaskbarBandLayout
     private static bool TryHorizontal(
         PixelRect taskbar,
         PixelRect? tray,
+        DockEdge edge,
         int textWidth,
         int textHeight,
         int nudge,
         out PixelRect bounds)
     {
-        var bandHeight = Math.Clamp(textHeight, 16, Math.Max(16, taskbar.Height - 4));
+        var bandHeight = Math.Max(textHeight, 16);
         var bandWidth = Math.Clamp(textWidth, 48, Math.Max(48, taskbar.Width - 60));
         var minX = taskbar.X + Math.Min(48, Math.Max(0, taskbar.Width - bandWidth - 4));
         var maxX = Math.Max(minX, taskbar.Right - bandWidth - 4);
@@ -60,6 +61,10 @@ public static class TaskbarBandLayout
             : taskbar.Right - bandWidth - 14;
         var x = Math.Clamp(anchor + nudge, minX, maxX);
         var y = taskbar.Y + (taskbar.Height - bandHeight) / 2;
+        if (edge == DockEdge.Top && y < taskbar.Y)
+            y = taskbar.Y;
+        if (edge == DockEdge.Bottom && y + bandHeight > taskbar.Bottom)
+            y = taskbar.Bottom - bandHeight;
         bounds = new PixelRect(x, y, bandWidth, bandHeight);
         return true;
     }
@@ -74,7 +79,7 @@ public static class TaskbarBandLayout
         out PixelRect bounds)
     {
         var bandWidth = Math.Clamp(textWidth, 48, 280);
-        var bandHeight = Math.Clamp(textHeight, 18, 36);
+        var bandHeight = Math.Clamp(textHeight, 18, 120);
         var minY = taskbar.Y + Math.Min(48, Math.Max(0, taskbar.Height - bandHeight - 4));
         var maxY = Math.Max(minY, taskbar.Bottom - bandHeight - 4);
         var anchor = tray is PixelRect known

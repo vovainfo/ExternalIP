@@ -67,4 +67,30 @@ public class TaskbarBandLayoutTests
         Assert.Equal(140, bounds.Width);
         Assert.True(bounds.Bottom <= tray.Y);
     }
+
+    [Fact]
+    public void Grows_a_two_line_label_inward_from_a_bottom_taskbar()
+    {
+        var taskbar = new PixelRect(0, 1032, 1920, 48);
+        var tray = new PixelRect(1760, 1032, 160, 48);
+
+        Assert.True(TaskbarBandLayout.TryGetBounds(taskbar, tray, Monitor, textWidth: 78, textHeight: 60, nudge: 0, out var bounds));
+
+        Assert.Equal(78, bounds.Width);
+        Assert.Equal(60, bounds.Height);
+        Assert.Equal(1080, bounds.Bottom);
+        Assert.True(bounds.Y < taskbar.Y);
+        Assert.True(bounds.Right <= tray.X);
+    }
+
+    [Fact]
+    public void Grows_a_two_line_label_inward_from_a_top_taskbar()
+    {
+        var taskbar = new PixelRect(0, 0, 1920, 48);
+
+        Assert.True(TaskbarBandLayout.TryGetBounds(taskbar, null, Monitor, 78, 60, 0, out var bounds));
+
+        Assert.Equal(0, bounds.Y);
+        Assert.Equal(60, bounds.Height);
+    }
 }

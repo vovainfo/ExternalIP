@@ -24,8 +24,12 @@ internal sealed class TaskbarIpBand : Form
     private readonly ContextMenuStrip _menu = new();
 
     private string _address = "…";
+    private AddressLines _lines = AddressLines.From(null);
     private int _nudge;
-    private Font _textFont = new("Segoe UI", 14f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private int _fontForThickness = -1;
+    private Font _textFont = new("Segoe UI", 22f, FontStyle.Bold, GraphicsUnit.Pixel);
+    private const TextFormatFlags MeasureFlags =
+        TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
     private bool _enabled = true;
     private bool _shownOnBar;
     private bool _dragging;
@@ -60,7 +64,7 @@ internal sealed class TaskbarIpBand : Form
         StartPosition = FormStartPosition.Manual;
         AutoScaleMode = AutoScaleMode.None;
         Location = new Point(-32000, -32000);
-        Size = new Size(120, 28);
+        Size = new Size(84, 60);
         TopMost = true;
         DoubleBuffered = true;
         Cursor = Cursors.Hand;
@@ -112,6 +116,7 @@ internal sealed class TaskbarIpBand : Form
         if (text == _address)
             return;
         _address = text;
+        _lines = AddressLines.From(text);
         _lastW = int.MinValue;
         Place();
         Invalidate();
@@ -224,13 +229,7 @@ internal sealed class TaskbarIpBand : Form
         using var border = new Pen(_lightTheme ? Color.FromArgb(196, 196, 196) : Color.FromArgb(72, 72, 72));
         e.Graphics.FillPath(fill, path);
         e.Graphics.DrawPath(border, path);
-        TextRenderer.DrawText(
-            e.Graphics,
-            _address,
-            _textFont,
-            ClientRectangle,
-            ForeColor,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+        DrawAddress(e.Graphics);
     }
 
     protected override void OnSizeChanged(EventArgs e)
@@ -281,16 +280,9 @@ internal sealed class TaskbarIpBand : Form
         }
 
         var thickness = taskbar.Width >= taskbar.Height ? taskbar.Height : taskbar.Width;
-        var fontPx = Math.Clamp(thickness - 20, 12, 16);
-        if (Math.Abs(_textFont.Size - fontPx) > 0.5f || _textFont.Unit != GraphicsUnit.Pixel)
-            ReplaceFont(fontPx);
-
-        var measured = TextRenderer.MeasureText(
-            _address,
-            _textFont,
-            new Size(int.MaxValue, int.MaxValue),
-            TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
-        if (!TaskbarBandLayout.TryGetBounds(taskbar, tray, monitor, measured.Width + 18, measured.Height + 8, _nudge, out var bounds))
+        FitFont(thickness);
+        var measured = MeasureLabel();
+        if (!TaskbarBandLayout.TryGetBounds(taskbar, tray, monitor, measured.Width, measured.Height, _nudge, out var bounds))
         {
             HideBand();
             return;
@@ -325,6 +317,65 @@ internal sealed class TaskbarIpBand : Form
         _shownOnBar = false;
         _lastX = int.MinValue;
         SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate | SwpHideWindow);
+    }
+
+    private void FitFont(int barThickness)
+    {
+        if (_fontForThickness == barThickness)
+            return;
+
+        var px = TaskbarLabelStyle.FontPx(barThickness, LineHeight);
+        if (Math.Abs(_textFont.Size - px) > 0.5f || _textFont.Unit != GraphicsUnit.Pixel)
+            ReplaceFont(px);
+        _fontForThickness = barThickness;
+    }
+
+    private static int LineHeight(int fontPx)
+    {
+        using var font = CreateFont(fontPx);
+        return TextRenderer.MeasureText(
+            "255",
+            font,
+            new Size(int.MaxValue, int.MaxValue),
+            MeasureFlags).Height;
+    }
+
+    private Size MeasureLabel()
+    {
+        var top = TextRenderer.MeasureText(_lines.Top, _textFont, new Size(int.MaxValue, int.MaxValue), MeasureFlags);
+        if (!_lines.HasSecondLine)
+            return new Size(top.Width + 14, top.Height + 8);
+
+        var bottom = TextRenderer.MeasureText(_lines.Bottom, _textFont, new Size(int.MaxValue, int.MaxValue), MeasureFlags);
+        return new Size(Math.Max(top.Width, bottom.Width) + 14, top.Height + bottom.Height + 6);
+    }
+
+    private void DrawAddress(Graphics graphics)
+    {
+        var flags = MeasureFlags | TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis;
+        if (!_lines.HasSecondLine)
+        {
+            TextRenderer.DrawText(graphics, _lines.Top, _textFont, ClientRectangle, ForeColor, flags);
+            return;
+        }
+
+        var top = TextRenderer.MeasureText(_lines.Top, _textFont, new Size(int.MaxValue, int.MaxValue), MeasureFlags);
+        var bottom = TextRenderer.MeasureText(_lines.Bottom, _textFont, new Size(int.MaxValue, int.MaxValue), MeasureFlags);
+        var start = Math.Max(0, (ClientRectangle.Height - top.Height - bottom.Height) / 2);
+        TextRenderer.DrawText(
+            graphics,
+            _lines.Top,
+            _textFont,
+            new Rectangle(0, start, ClientRectangle.Width, top.Height),
+            ForeColor,
+            flags);
+        TextRenderer.DrawText(
+            graphics,
+            _lines.Bottom,
+            _textFont,
+            new Rectangle(0, start + top.Height, ClientRectangle.Width, bottom.Height),
+            ForeColor,
+            flags);
     }
 
     private void ReplaceFont(int fontPx)
