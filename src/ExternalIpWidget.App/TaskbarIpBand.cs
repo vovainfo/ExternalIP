@@ -19,6 +19,7 @@ internal sealed class TaskbarIpBand : Form
     private readonly Action _refresh;
     private readonly Action _copy;
     private readonly Action _hideFromTaskbar;
+    private readonly Action _exit;
     private readonly Action<int> _nudgeChanged;
     private readonly System.Windows.Forms.Timer _followTimer = new() { Interval = 150 };
     private readonly ContextMenuStrip _menu = new();
@@ -50,6 +51,7 @@ internal sealed class TaskbarIpBand : Form
         Action refresh,
         Action copy,
         Action hideFromTaskbar,
+        Action exit,
         Action<int> nudgeChanged,
         int nudge)
     {
@@ -57,6 +59,7 @@ internal sealed class TaskbarIpBand : Form
         _refresh = refresh;
         _copy = copy;
         _hideFromTaskbar = hideFromTaskbar;
+        _exit = exit;
         _nudgeChanged = nudgeChanged;
         _nudge = nudge;
 
@@ -77,6 +80,7 @@ internal sealed class TaskbarIpBand : Form
         _menu.Items.Add("Копировать IP", null, (_, _) => _copy());
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("Убрать с панели задач", null, (_, _) => _hideFromTaskbar());
+        _menu.Items.Add("Выход", null, (_, _) => _exit());
 
         _followTimer.Tick += (_, _) => Place();
     }
