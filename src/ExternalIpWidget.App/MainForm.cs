@@ -18,6 +18,7 @@ public sealed class MainForm : Form
     private readonly Font _nicFont;
     private readonly Font _eyebrowFont;
     private readonly Font _geoFont;
+    private readonly Font _traceFont;
 
     private readonly Label _ipLabel;
     private readonly Label _geoLabel;
@@ -25,8 +26,10 @@ public sealed class MainForm : Form
     private readonly Label _nicValue;
     private readonly Label _explanation;
     private readonly Label _status;
+    private readonly TextBox _traceBox;
     private readonly Button _refreshButton;
     private readonly Button _copyButton;
+    private readonly Button _copyTraceButton;
     private readonly CheckBox _alwaysOnTop;
     private readonly CheckBox _showOnTaskbar;
     private readonly CheckBox _startWithWindows;
@@ -54,6 +57,7 @@ public sealed class MainForm : Form
         _nicFont = new Font(Font, FontStyle.Bold);
         _eyebrowFont = CreateUiFont(Font.FontFamily.Name, 8.5f, FontStyle.Bold);
         _geoFont = CreateUiFont(Font.FontFamily.Name, 11f, FontStyle.Regular);
+        _traceFont = CreateMonoFont();
 
         Text = "Внешний IP";
         BackColor = Color.FromArgb(244, 247, 251);
@@ -117,6 +121,22 @@ public sealed class MainForm : Form
         _refreshButton = CreateButton("Обновить", primary: true);
         _copyButton = CreateButton("Копировать", primary: false);
         _copyButton.Enabled = false;
+        _copyTraceButton = CreateButton("Копировать журнал", primary: false);
+        _traceBox = new TextBox
+        {
+            Multiline = true,
+            ReadOnly = true,
+            WordWrap = true,
+            ScrollBars = ScrollBars.Vertical,
+            Font = _traceFont,
+            Width = 436,
+            Height = 148,
+            BackColor = Color.FromArgb(248, 250, 252),
+            ForeColor = Color.FromArgb(15, 23, 42),
+            BorderStyle = BorderStyle.FixedSingle,
+            Text = "Журнал запроса появится после обновления.",
+            Margin = new Padding(0, 4, 0, 0),
+        };
         _alwaysOnTop = new CheckBox
         {
             Text = "Поверх всех окон",
@@ -215,6 +235,9 @@ public sealed class MainForm : Form
         root.Controls.Add(buttons);
         root.Controls.Add(options);
         root.Controls.Add(_status);
+        root.Controls.Add(Caption("Журнал запроса"));
+        root.Controls.Add(_traceBox);
+        root.Controls.Add(_copyTraceButton);
         AutoSize = true;
         AutoSizeMode = AutoSizeMode.GrowAndShrink;
         Controls.Add(root);
@@ -227,6 +250,8 @@ public sealed class MainForm : Form
         _toolTip.SetToolTip(_showOnTaskbar, "Показывать внешний IP на панели задач, слева от часов. Плашку можно перетащить.");
         _toolTip.SetToolTip(_startWithWindows, "Добавить ярлык в папку автозагрузки Windows.");
         _toolTip.SetToolTip(_interval, "Как часто снова спрашивать внешний сервис.");
+        _toolTip.SetToolTip(_traceBox, "Что произошло при запросе внешнего IP: DNS, подключение, ответ сервиса.");
+        _toolTip.SetToolTip(_copyTraceButton, "Скопировать журнал, чтобы его можно было разобрать.");
 
         _taskbarBand = new TaskbarIpBand(
             ShowFromTray,
@@ -342,6 +367,7 @@ public sealed class MainForm : Form
             _nicFont.Dispose();
             _eyebrowFont.Dispose();
             _geoFont.Dispose();
+            _traceFont.Dispose();
         }
 
         base.Dispose(disposing);
@@ -456,6 +482,7 @@ public sealed class MainForm : Form
     {
         _refreshButton.Click += (_, _) => BeginRefresh();
         _copyButton.Click += (_, _) => BeginCopy();
+        _copyTraceButton.Click += (_, _) => CopyTrace();
         _alwaysOnTop.CheckedChanged += (_, _) =>
         {
             TopMost = _alwaysOnTop.Checked;
@@ -525,6 +552,7 @@ public sealed class MainForm : Form
         {
             if (IsDisposed || ex is OperationCanceledException)
                 return;
+            AppendTrace(ex.GetType().Name + ": " + ex.Message);
             ShowStatus("Ошибка обновления: " + ex.Message, error: true);
         }
     }
@@ -546,12 +574,19 @@ public sealed class MainForm : Form
         try
         {
             UpdateNic();
+            _traceBox.Clear();
+            AppendTrace($"сетевая карта: {_nicAddress ?? "не определён"}");
             var progress = new Progress<string>(name =>
             {
                 if (generation == _generation && !IsDisposed)
                     _sourceLabel.Text = $"Запрос к {name}…";
             });
-            var result = await _lookup.GetAsync(token, progress);
+            var trace = new Progress<string>(line =>
+            {
+                if (generation == _generation && !IsDisposed)
+                    AppendTrace(line);
+            });
+            var result = await _lookup.GetAsync(token, progress, trace);
             if (generation != _generation || IsDisposed)
                 return;
             ShowResult(result);
@@ -771,6 +806,47 @@ public sealed class MainForm : Form
 
         _ipLabel.BackColor = Color.White;
         _ipLabel.ForeColor = Color.FromArgb(15, 23, 42);
+    }
+
+    private void AppendTrace(string line)
+    {
+        if (IsDisposed)
+            return;
+        if (_traceBox.TextLength > 0)
+            _traceBox.AppendText(Environment.NewLine);
+        _traceBox.AppendText(line);
+        _traceBox.SelectionStart = _traceBox.TextLength;
+        _traceBox.ScrollToCaret();
+    }
+
+    private void CopyTrace()
+    {
+        if (_traceBox.TextLength == 0)
+            return;
+
+        try
+        {
+            Clipboard.SetText(_traceBox.Text);
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            ShowStatus("Не удалось скопировать журнал.", error: true);
+            return;
+        }
+
+        ShowStatus("Журнал скопирован.", error: false);
+    }
+
+    private static Font CreateMonoFont()
+    {
+        try
+        {
+            return new Font("Consolas", 8.5f, FontStyle.Regular, GraphicsUnit.Point);
+        }
+        catch (ArgumentException)
+        {
+            return new Font(FontFamily.GenericMonospace, 8.5f, FontStyle.Regular, GraphicsUnit.Point);
+        }
     }
 
     private void ShowStatus(string text, bool error)

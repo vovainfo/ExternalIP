@@ -46,6 +46,33 @@ public class PublicIpLookupTests
     }
 
     [Fact]
+    public async Task Trace_records_the_body_and_why_an_answer_was_skipped()
+    {
+        var handler = new DelegateHandler((request, _) =>
+        {
+            var body = request.RequestUri!.AbsolutePath.EndsWith("/v6", StringComparison.Ordinal)
+                ? "2001:db8::9"
+                : "203.0.113.9";
+            return Task.FromResult(Text(body));
+        });
+
+        using var http = Client(handler);
+        var lookup = new PublicIpLookup(http,
+        [
+            new IpProvider("v6", "https://example.test/v6"),
+            new IpProvider("v4", "https://example.test/v4"),
+        ]);
+        var lines = new List<string>();
+
+        var result = await lookup.GetAsync(trace: new SyncProgress(lines.Add));
+
+        Assert.Equal("203.0.113.9", result.Address);
+        Assert.Contains(lines, line => line.Contains("IPv6", StringComparison.Ordinal) && line.Contains("2001:db8::9", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("принят IPv4 203.0.113.9", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("HTTP 200", StringComparison.Ordinal) && line.Contains("203.0.113.9", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Uses_the_first_response_that_is_an_ip_address()
     {
         var calls = new List<string>();

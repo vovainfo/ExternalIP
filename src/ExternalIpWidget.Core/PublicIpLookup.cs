@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 
@@ -17,6 +18,8 @@ public sealed class PublicIpLookup
         new("ifconfig.me", "https://ifconfig.me/ip"),
         new("ipinfo", "https://ipinfo.io/ip"),
     ];
+
+    private static readonly AsyncLocal<Action<string>?> ConnectTrace = new();
 
     private readonly HttpClient _http;
     private readonly IReadOnlyList<IpProvider> _providers;
@@ -60,63 +63,99 @@ public sealed class PublicIpLookup
 
     public async Task<PublicIpResult> GetAsync(
         CancellationToken cancellationToken = default,
-        IProgress<string>? progress = null)
+        IProgress<string>? progress = null,
+        IProgress<string>? trace = null)
     {
         var attempts = new List<string>();
         Exception? last = null;
+        Note(trace, $"старт, сервисов {_providers.Count}, таймаут {_perProviderTimeout.TotalSeconds:0} с, соединение только IPv4");
 
         foreach (var provider in _providers)
         {
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report(provider.Name);
+            Note(trace, $"{provider.Name} {provider.Url}");
 
             try
             {
-                var address = await RequestAddressAsync(provider, cancellationToken).ConfigureAwait(false);
+                var address = await RequestAddressAsync(provider, cancellationToken, trace).ConfigureAwait(false);
+                Note(trace, $"{provider.Name} принят IPv4 {address}");
                 return new PublicIpResult(address, provider.Name, provider.Url, DateTimeOffset.Now);
             }
             catch (Exception ex) when (IsProviderFailure(ex, cancellationToken))
             {
                 last = ex;
+                var reason = Describe(ex);
                 attempts.Add($"{provider.Name}: {Short(ex)}");
+                Note(trace, $"{provider.Name} пропущен: {reason}");
             }
         }
 
+        Note(trace, "ни один сервис не вернул IPv4");
         throw new PublicIpLookupException(
             "Не удалось определить внешний IP ни через один сервис.",
             attempts,
             last);
     }
 
-    private async Task<string> RequestAddressAsync(IpProvider provider, CancellationToken cancellationToken)
+    private async Task<string> RequestAddressAsync(
+        IpProvider provider,
+        CancellationToken cancellationToken,
+        IProgress<string>? trace)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(_perProviderTimeout);
+        var started = Stopwatch.StartNew();
+        ConnectTrace.Value = line => Note(trace, $"{provider.Name} {line}");
 
-        using var response = await _http
-            .GetAsync(provider.Url, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
-            .ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
+        try
+        {
+            using var response = await _http
+                .GetAsync(provider.Url, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+                .ConfigureAwait(false);
+            var body = response.Content is null
+                ? ""
+                : await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
+            Note(trace, $"{provider.Name} HTTP {(int)response.StatusCode} за {started.ElapsedMilliseconds} мс, тело {body.Length}: {Preview(body)}");
+            if (!response.IsSuccessStatusCode)
+                throw new HttpRequestException($"HTTP {(int)response.StatusCode}");
+            if (body.Length > 512)
+                throw new FormatException("Слишком длинный ответ.");
 
-        var body = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
-        if (body.Length > 512)
-            throw new FormatException("Слишком длинный ответ.");
+            var address = IpAddressText.Parse(body);
+            if (!IPAddress.TryParse(address, out var ip))
+                throw new FormatException("Ответ сервиса не содержит IP-адрес.");
+            if (ip.IsIPv4MappedToIPv6)
+                ip = ip.MapToIPv4();
+            if (ip.AddressFamily != AddressFamily.InterNetwork)
+                throw new FormatException($"Сервис вернул IPv6 {ip}. Нужен IPv4.");
 
-        var address = IpAddressText.Parse(body);
-        if (!IPAddress.TryParse(address, out var ip))
-            throw new FormatException("Ответ сервиса не содержит IP-адрес.");
-        if (ip.IsIPv4MappedToIPv6)
-            ip = ip.MapToIPv4();
-        if (ip.AddressFamily != AddressFamily.InterNetwork)
-            throw new FormatException("Сервис вернул IPv6. Нужен IPv4.");
-
-        return ip.ToString();
+            return ip.ToString();
+        }
+        finally
+        {
+            ConnectTrace.Value = null;
+        }
     }
 
     private static async ValueTask<Stream> ConnectOverIPv4Async(
         SocketsHttpConnectionContext context,
         CancellationToken cancellationToken)
     {
+        var host = context.DnsEndPoint.Host;
+        var port = context.DnsEndPoint.Port;
+        try
+        {
+            var addresses = await Dns.GetHostAddressesAsync(host, AddressFamily.InterNetwork, cancellationToken)
+                .ConfigureAwait(false);
+            ConnectTrace.Value?.Invoke(
+                $"DNS {host} A: {(addresses.Length == 0 ? "нет записей" : string.Join(", ", addresses.Select(item => item.ToString())))}");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            ConnectTrace.Value?.Invoke($"DNS {host}: {Describe(ex)}");
+        }
+
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp)
         {
             NoDelay = true,
@@ -125,13 +164,48 @@ public sealed class PublicIpLookup
         try
         {
             await socket.ConnectAsync(context.DnsEndPoint, cancellationToken).ConfigureAwait(false);
+            ConnectTrace.Value?.Invoke($"TCP {socket.LocalEndPoint} -> {socket.RemoteEndPoint}");
             return new NetworkStream(socket, ownsSocket: true);
         }
-        catch
+        catch (Exception ex)
         {
             socket.Dispose();
+            ConnectTrace.Value?.Invoke($"TCP {host}:{port}: {Describe(ex)}");
             throw;
         }
+    }
+
+    private static void Note(IProgress<string>? trace, string line)
+    {
+        trace?.Report($"{DateTimeOffset.Now:HH:mm:ss.fff} {line}");
+    }
+
+    private static string Preview(string body)
+    {
+        var text = body.ReplaceLineEndings(" ").Trim();
+        if (text.Length == 0)
+            return "(пусто)";
+        return text.Length <= 160 ? text : text[..160] + "…";
+    }
+
+    private static string Describe(Exception ex)
+    {
+        var parts = new List<string>();
+        for (var current = ex; current is not null && parts.Count < 4; current = current.InnerException)
+        {
+            if (current is OperationCanceledException)
+            {
+                parts.Add("таймаут");
+                break;
+            }
+
+            var message = current.Message.ReplaceLineEndings(" ").Trim();
+            if (message.Length > 180)
+                message = message[..180];
+            parts.Add($"{current.GetType().Name}: {message}");
+        }
+
+        return parts.Count == 0 ? ex.GetType().Name : string.Join(" ← ", parts);
     }
 
     private static bool IsProviderFailure(Exception ex, CancellationToken cancellationToken)
