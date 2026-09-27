@@ -201,7 +201,6 @@ public sealed class MainForm : Form
         card.Controls.Add(_ipLabel);
         card.Controls.Add(_geoLabel);
         card.Controls.Add(_sourceLabel);
-        card.Controls.Add(Caption("не с сетевого адаптера, а от внешнего сервиса"));
 
         var buttons = new FlowLayoutPanel
         {
