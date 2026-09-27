@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 using ExternalIpWidget.Core;
 
 namespace ExternalIpWidget;
@@ -19,7 +20,7 @@ internal sealed class TaskbarIpBand : Form
     private readonly Action _copy;
     private readonly Action _hideFromTaskbar;
     private readonly Action<int> _nudgeChanged;
-    private readonly System.Windows.Forms.Timer _followTimer = new() { Interval = 750 };
+    private readonly System.Windows.Forms.Timer _followTimer = new() { Interval = 150 };
     private readonly ContextMenuStrip _menu = new();
 
     private string _address = "…";
@@ -36,6 +37,8 @@ internal sealed class TaskbarIpBand : Form
     private int _lastW = int.MinValue;
     private int _lastH = int.MinValue;
     private bool _lightTheme;
+    private bool _placing;
+    private uint _shellHookMessage;
 
     public TaskbarIpBand(
         Action showMain,
@@ -117,8 +120,38 @@ internal sealed class TaskbarIpBand : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        _shellHookMessage = RegisterWindowMessage("SHELLHOOK");
+        RegisterShellHookWindow(Handle);
         if (_enabled)
             Place();
+    }
+
+    protected override void OnHandleDestroyed(EventArgs e)
+    {
+        DeregisterShellHookWindow(Handle);
+        base.OnHandleDestroyed(e);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (_shellHookMessage != 0 && m.Msg == (int)_shellHookMessage && _enabled && !_placing)
+            Place();
+
+        const int wmWindowPosChanging = 0x0046;
+        if (m.Msg == wmWindowPosChanging && _enabled && _shownOnBar)
+            KeepAboveTaskbar(m.LParam);
+
+        base.WndProc(ref m);
+    }
+
+    private static void KeepAboveTaskbar(IntPtr lParam)
+    {
+        var position = Marshal.PtrToStructure<WindowPos>(lParam);
+        if ((position.flags & 0x0080u) != 0)
+            position.flags &= ~0x0080u;
+        position.hwndInsertAfter = new IntPtr(-1);
+        position.flags &= ~0x0004u;
+        Marshal.StructureToPtr(position, lParam, false);
     }
 
     protected override void OnShown(EventArgs e)
@@ -224,9 +257,22 @@ internal sealed class TaskbarIpBand : Form
 
     private void Place()
     {
-        if (!_enabled || !IsHandleCreated)
+        if (!_enabled || !IsHandleCreated || _placing)
             return;
 
+        _placing = true;
+        try
+        {
+            PlaceCore();
+        }
+        finally
+        {
+            _placing = false;
+        }
+    }
+
+    private void PlaceCore()
+    {
         ApplyTheme(force: false);
         if (!TaskbarMetrics.TryGet(out var taskbar, out var tray, out var monitor))
         {
@@ -250,8 +296,18 @@ internal sealed class TaskbarIpBand : Form
             return;
         }
 
-        if (_shownOnBar && bounds.X == _lastX && bounds.Y == _lastY && bounds.Width == _lastW && bounds.Height == _lastH)
+        var samePlace = _shownOnBar
+            && bounds.X == _lastX
+            && bounds.Y == _lastY
+            && bounds.Width == _lastW
+            && bounds.Height == _lastH;
+        if (samePlace)
+        {
+            // Щелчок по панели задач поднимает её саму поверх плашки. Координаты те же,
+            // поэтому окно нужно снова поставить выше, не меняя положение.
+            SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate | SwpShowWindow);
             return;
+        }
 
         _shownOnBar = true;
         _lastX = bounds.X;
@@ -335,6 +391,27 @@ internal sealed class TaskbarIpBand : Form
         return path;
     }
 
-    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint RegisterWindowMessage(string message);
+
+    [DllImport("user32.dll")]
+    private static extern bool RegisterShellHookWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool DeregisterShellHookWindow(IntPtr hWnd);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowPos
+    {
+        public IntPtr hwnd;
+        public IntPtr hwndInsertAfter;
+        public int x;
+        public int y;
+        public int cx;
+        public int cy;
+        public uint flags;
+    }
 }
