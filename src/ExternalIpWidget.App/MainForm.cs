@@ -50,6 +50,7 @@ public sealed class MainForm : Form
     private bool _exitRequested;
     private uint _showMessage;
     private string? _currentAddress;
+    private GeoIpInfo? _geoInfo;
     private string? _appliedCustomProxy;
 
     public MainForm()
@@ -671,8 +672,8 @@ public sealed class MainForm : Form
             var result = await _lookup.GetAsync(token, progress, trace);
             if (generation != _generation || IsDisposed)
                 return;
-            ShowResult(result);
-            await ShowGeoAsync(result, generation, token);
+            if (ShowResult(result, out var keepPlaceText))
+                await ShowGeoAsync(result, generation, token, replacePlaceText: !keepPlaceText);
         }
         catch (OperationCanceledException) when (generation != _generation || token.IsCancellationRequested)
         {
@@ -692,31 +693,54 @@ public sealed class MainForm : Form
         }
     }
 
-    private void ShowResult(PublicIpResult result)
+    private bool ShowResult(PublicIpResult result, out bool keepPlaceText)
     {
         var addressChanged = !string.Equals(_currentAddress, result.Address, StringComparison.OrdinalIgnoreCase);
+        var lookupGeo = GeoRefreshPolicy.ShouldQuery(_geoInfo, result.Address);
+        keepPlaceText = lookupGeo && _geoInfo is not null;
         _currentAddress = result.Address;
+        if (lookupGeo)
+            _geoInfo = null;
+
         _ipLabel.Text = result.Address;
         if (addressChanged)
             ApplyAddressHighlight(false);
         _ipLabel.Font = result.Address.Length > 15 ? _ipFontCompact : _ipFontLarge;
-        _sourceLabel.Text = $"Источник: {result.ProviderName}";
-        _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl);
         _copyButton.Enabled = true;
-        _geoLabel.Text = "Определение местоположения…";
-        _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
         Text = WindowTitle(result.Address);
-        SetTrayText("External IP: " + result.Address);
         _taskbarBand.SetAddress(result.Address);
         ShowStatus($"Обновлено в {result.RetrievedAt.LocalDateTime:HH:mm:ss}", error: false);
+
+        if (!lookupGeo && _geoInfo is not null)
+        {
+            ShowGeo(result, _geoInfo);
+            keepPlaceText = true;
+            return false;
+        }
+
+        if (!keepPlaceText)
+        {
+            _geoLabel.Text = "Определение местоположения…";
+            _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
+        }
+
+        _sourceLabel.Text = $"Источник: {result.ProviderName}";
+        _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl);
+        SetTrayText("External IP: " + result.Address);
+        return true;
     }
 
-    private async Task ShowGeoAsync(PublicIpResult result, int generation, CancellationToken token)
+    private async Task ShowGeoAsync(PublicIpResult result, int generation, CancellationToken token, bool replacePlaceText)
     {
         var progress = new Progress<string>(name =>
         {
-            if (generation == _generation && !IsDisposed)
-                _geoLabel.Text = $"Запрос к {name}…";
+            if (generation != _generation || IsDisposed)
+                return;
+            var line = $"Запрос к {name}…";
+            if (replacePlaceText)
+                _geoLabel.Text = line;
+            else
+                ShowStatus(line, error: false);
         });
 
         try
@@ -725,31 +749,43 @@ public sealed class MainForm : Form
             if (generation != _generation || IsDisposed)
                 return;
 
-            _geoLabel.Text = geo.FormatPlace();
-            _geoLabel.ForeColor = Color.FromArgb(15, 23, 42);
-            ApplyAddressHighlight(geo.BelongsToRussia());
-            _taskbarBand.SetRussia(geo.BelongsToRussia());
-            _toolTip.SetToolTip(_geoLabel, geo.FormatDetails());
-            _sourceLabel.Text = $"Источник: {result.ProviderName} · GeoIP: {geo.ProviderName}";
-            _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl + Environment.NewLine + geo.ProviderUrl);
-            SetTrayText($"External IP: {result.Address} · {geo.FormatPlace()}");
+            _geoInfo = geo;
+            ShowGeo(result, geo);
+            ShowStatus($"Обновлено в {result.RetrievedAt.LocalDateTime:HH:mm:ss}", error: false);
         }
         catch (OperationCanceledException) when (generation != _generation || token.IsCancellationRequested)
         {
         }
         catch (GeoIpLookupException ex) when (generation == _generation && !IsDisposed)
         {
+            _geoInfo = null;
             _geoLabel.Text = "Местоположение не определено";
             _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
             var details = ex.Attempts.Count == 0 ? ex.Message : string.Join(Environment.NewLine, ex.Attempts);
             _toolTip.SetToolTip(_geoLabel, details);
+            ShowStatus($"Обновлено в {result.RetrievedAt.LocalDateTime:HH:mm:ss}", error: false);
         }
+    }
+
+    private void ShowGeo(PublicIpResult result, GeoIpInfo geo)
+    {
+        var place = geo.FormatPlace();
+        if (_geoLabel.Text != place)
+            _geoLabel.Text = place;
+        _geoLabel.ForeColor = Color.FromArgb(15, 23, 42);
+        ApplyAddressHighlight(geo.BelongsToRussia());
+        _taskbarBand.SetRussia(geo.BelongsToRussia());
+        _toolTip.SetToolTip(_geoLabel, geo.FormatDetails());
+        _sourceLabel.Text = $"Источник: {result.ProviderName} · GeoIP: {geo.ProviderName}";
+        _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl + Environment.NewLine + geo.ProviderUrl);
+        SetTrayText($"External IP: {result.Address} · {place}");
     }
 
     private void ShowLookupError(PublicIpLookupException ex)
     {
         var details = ex.Attempts.Count == 0 ? ex.Message : string.Join(Environment.NewLine, ex.Attempts);
         _currentAddress = null;
+        _geoInfo = null;
         _copyButton.Enabled = false;
         _ipLabel.Text = "Не удалось обновить адрес";
         _ipLabel.Font = _ipFontCompact;
