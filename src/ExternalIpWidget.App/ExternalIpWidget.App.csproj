@@ -15,6 +15,7 @@
     <AssemblyTitle>External IP</AssemblyTitle>
     <Description>Виджет внешнего IP-адреса. Адрес запрашивается у внешнего сервиса и не берётся с сетевой карты.</Description>
     <Company>ExternalIpWidget</Company>
+    <Copyright>(C) Владимир Гуменников</Copyright>
   </PropertyGroup>
 
   <ItemGroup>
