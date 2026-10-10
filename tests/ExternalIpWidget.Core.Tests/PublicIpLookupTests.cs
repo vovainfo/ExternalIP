@@ -6,6 +6,17 @@ namespace ExternalIpWidget.Core.Tests;
 
 public class PublicIpLookupTests
 {
+    [Theory]
+    [InlineData("1.2.18", "ExternalIpWidget/1.2.18")]
+    [InlineData(null, "ExternalIpWidget/1.0")]
+    [InlineData("не версия", "ExternalIpWidget/1.0")]
+    public void Puts_the_app_version_into_the_user_agent(string? version, string expected)
+    {
+        using var http = PublicIpLookup.CreateHttpClient(version: version);
+
+        Assert.Equal(expected, http.DefaultRequestHeaders.UserAgent.ToString());
+    }
+
     [Fact]
     public async Task Opens_a_new_connection_for_every_request()
     {
@@ -245,6 +256,42 @@ public class PublicIpLookupTests
 
         Assert.Equal("198.51.100.20", result.Address);
         Assert.Equal("fast", result.ProviderName);
+    }
+
+    [Fact]
+    public async Task Skips_a_provider_whose_answer_exceeds_the_buffer_limit()
+    {
+        var handler = new DelegateHandler((request, _) =>
+        {
+            var body = request.RequestUri!.AbsolutePath.EndsWith("/huge", StringComparison.Ordinal)
+                ? new string('9', PublicIpLookup.MaxResponseBytes + 1)
+                : "203.0.113.10";
+            return Task.FromResult(Text(body));
+        });
+        using var http = Client(handler);
+        http.MaxResponseContentBufferSize = PublicIpLookup.MaxResponseBytes;
+        var lookup = new PublicIpLookup(http,
+        [
+            new IpProvider("huge", "https://example.test/huge"),
+            new IpProvider("small", "https://example.test/small"),
+        ]);
+
+        var lines = new List<string>();
+
+        var result = await lookup.GetAsync(trace: new SyncProgress(lines.Add));
+
+        Assert.Equal("small", result.ProviderName);
+        // Тело обрывается ещё при чтении: строки «huge HTTP 200 … тело N» в журнале нет.
+        Assert.DoesNotContain(lines, line => line.Contains("huge HTTP", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.Contains("huge пропущен", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Limits_the_buffered_answer_size()
+    {
+        using var http = PublicIpLookup.CreateHttpClient();
+
+        Assert.Equal(PublicIpLookup.MaxResponseBytes, http.MaxResponseContentBufferSize);
     }
 
     [Fact]

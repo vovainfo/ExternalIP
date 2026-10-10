@@ -1,0 +1,23 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Build
+        run: dotnet build ExternalIpWidget.slnx -c Release
+
+      # Live-тесты ходят во внешние сервисы и зависят от сети раннера, поэтому здесь их пропускаем.
+      - name: Test
+        run: dotnet test ExternalIpWidget.slnx -c Release --no-build --filter "Category!=Live"

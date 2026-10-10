@@ -1,0 +1,54 @@
+name: Release
+
+# Тег vX.Y.Z собирает самодостаточный exe и кладёт его в релиз.
+# Если релиз уже создан вручную (с описанием), заменяется только файл.
+# Если релиза нет, создаётся черновик: описание дописывается перед публикацией.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Check that the tag matches the project version
+        shell: pwsh
+        run: |
+          $version = (Select-Xml -Path src/ExternalIpWidget.App/ExternalIpWidget.App.csproj -XPath '//Version').Node.InnerText
+          if ("v$version" -ne $env:TAG) {
+              Write-Error "Тег $env:TAG не совпадает с версией $version в ExternalIpWidget.App.csproj."
+              exit 1
+          }
+
+      - name: Test
+        run: dotnet test ExternalIpWidget.slnx -c Release --filter "Category!=Live"
+
+      - name: Publish
+        shell: pwsh
+        run: |
+          ./scripts/publish-windows.ps1 -SelfContained
+          Copy-Item dist/win-x64-selfcontained/ExternalIpWidget.exe ExternalIpWidget-win-x64.exe
+
+      - name: Upload to the release
+        shell: pwsh
+        run: |
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+              gh release upload $env:TAG ExternalIpWidget-win-x64.exe --clobber
+          }
+          else {
+              $title = "External IP " + $env:TAG.TrimStart('v')
+              gh release create $env:TAG ExternalIpWidget-win-x64.exe --draft --title $title --notes "Скачайте ``ExternalIpWidget-win-x64.exe`` и запустите его. Отдельно ставить .NET не нужно."
+          }

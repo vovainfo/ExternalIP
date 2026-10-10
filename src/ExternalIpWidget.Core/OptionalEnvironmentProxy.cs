@@ -106,7 +106,7 @@ public sealed class OptionalEnvironmentProxy : IWebProxy
                 if (SystemProxy.IsBypassed(destination))
                     return ProxyChoice.AsDirect("выбран системный прокси, но в Windows он не задан");
                 var system = SystemProxy.GetProxy(destination);
-                if (system is null || SameEndpoint(system, destination))
+                if (system is null || ProxyDiagnostics.SameEndpoint(system, destination))
                     return ProxyChoice.AsDirect("выбран системный прокси, но в Windows он не задан");
                 return ProxyChoice.AsVia(system, "адрес взят из системного прокси Windows");
 
@@ -139,7 +139,7 @@ public sealed class OptionalEnvironmentProxy : IWebProxy
             if (SystemProxy.IsBypassed(destination))
                 return "системный прокси не задан";
             var proxy = SystemProxy.GetProxy(destination);
-            if (proxy is null || SameEndpoint(proxy, destination))
+            if (proxy is null || ProxyDiagnostics.SameEndpoint(proxy, destination))
                 return "системный прокси не задан";
             return ProxyDiagnostics.Redact(proxy.ToString());
         }
@@ -153,7 +153,7 @@ public sealed class OptionalEnvironmentProxy : IWebProxy
     {
         foreach (var name in new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY" })
         {
-            var value = ReadEither(EnvironmentReader, name.ToLowerInvariant(), name);
+            var value = EnvironmentProxyRules.Read(EnvironmentReader, name.ToLowerInvariant(), name);
             if (string.IsNullOrWhiteSpace(value))
             {
                 if (name == "NO_PROXY")
@@ -179,21 +179,6 @@ public sealed class OptionalEnvironmentProxy : IWebProxy
         var user = Uri.UnescapeDataString(colon < 0 ? info : info[..colon]);
         var password = colon < 0 ? "" : Uri.UnescapeDataString(info[(colon + 1)..]);
         Credentials = new NetworkCredential(user, password);
-    }
-
-    private static string? ReadEither(Func<string, string?> read, string lower, string upper)
-    {
-        var value = read(lower);
-        if (!string.IsNullOrWhiteSpace(value))
-            return value;
-        value = read(upper);
-        return string.IsNullOrWhiteSpace(value) ? null : value;
-    }
-
-    private static bool SameEndpoint(Uri proxy, Uri destination)
-    {
-        return proxy.Host.Equals(destination.Host, StringComparison.OrdinalIgnoreCase)
-            && proxy.Port == destination.Port;
     }
 }
 
@@ -238,7 +223,7 @@ internal static class EnvironmentProxyRules
         return Uri.TryCreate(text, UriKind.Absolute, out var uri) ? uri : null;
     }
 
-    private static string? Read(Func<string, string?> environment, string lower, string upper)
+    internal static string? Read(Func<string, string?> environment, string lower, string upper)
     {
         var value = environment(lower);
         if (!string.IsNullOrWhiteSpace(value))

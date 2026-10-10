@@ -30,6 +30,7 @@ internal sealed class TaskbarIpBand : Form
     private bool _twoLines = true;
     private int _customFontPx = TaskbarLabelStyle.AutoFontPx;
     private int _fontForThickness = -1;
+    private Size? _labelSize;
     private Font _textFont = new("Segoe UI", 22f, FontStyle.Bold, GraphicsUnit.Pixel);
     private const TextFormatFlags MeasureFlags =
         TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
@@ -85,6 +86,8 @@ internal sealed class TaskbarIpBand : Form
         _menu.Items.Add("Выход", null, (_, _) => _exit());
 
         _followTimer.Tick += (_, _) => Place();
+        // Тему не читаем из реестра на каждом тике таймера: Windows сама сообщает о смене оформления.
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
     }
 
     protected override CreateParams CreateParams
@@ -124,6 +127,7 @@ internal sealed class TaskbarIpBand : Form
             return;
         _address = text;
         _lines = AddressLines.From(text, _twoLines);
+        _labelSize = null;
         if (_russia)
         {
             _russia = false;
@@ -143,6 +147,7 @@ internal sealed class TaskbarIpBand : Form
         _twoLines = twoLines;
         _customFontPx = customFontPx;
         _lines = AddressLines.From(_address, _twoLines);
+        _labelSize = null;
         _fontForThickness = -1;
         _lastW = int.MinValue;
         Place();
@@ -280,6 +285,7 @@ internal sealed class TaskbarIpBand : Form
     {
         if (disposing)
         {
+            Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
             _followTimer.Dispose();
             _menu.Dispose();
             Font = SystemFonts.MessageBoxFont;
@@ -307,8 +313,8 @@ internal sealed class TaskbarIpBand : Form
 
     private void PlaceCore()
     {
-        ApplyTheme(force: false);
-        if (!TaskbarMetrics.TryGet(out var taskbar, out var tray, out var monitor))
+        if (!TaskbarMetrics.TryGet(out var taskbar, out var tray, out var monitor)
+            || FullScreenWindow.Covers(monitor, Handle))
         {
             HideBand();
             return;
@@ -377,6 +383,12 @@ internal sealed class TaskbarIpBand : Form
 
     private Size MeasureLabel()
     {
+        _labelSize ??= MeasureLabelCore();
+        return _labelSize.Value;
+    }
+
+    private Size MeasureLabelCore()
+    {
         var top = TextRenderer.MeasureText(_lines.Top, _textFont, new Size(int.MaxValue, int.MaxValue), MeasureFlags);
         if (!_lines.HasSecondLine)
             return new Size(top.Width + 14, top.Height + 8);
@@ -419,6 +431,7 @@ internal sealed class TaskbarIpBand : Form
         var previous = _textFont;
         _textFont = next;
         Font = next;
+        _labelSize = null;
         previous.Dispose();
     }
 
@@ -432,6 +445,20 @@ internal sealed class TaskbarIpBand : Form
         {
             return new Font(FontFamily.GenericSansSerif, fontPx, FontStyle.Bold, GraphicsUnit.Pixel);
         }
+    }
+
+    private void OnUserPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e)
+    {
+        if (IsDisposed)
+            return;
+        if (InvokeRequired)
+        {
+            if (IsHandleCreated)
+                BeginInvoke(() => ApplyTheme(force: false));
+            return;
+        }
+
+        ApplyTheme(force: false);
     }
 
     private void ApplyTheme(bool force)

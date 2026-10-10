@@ -47,14 +47,8 @@ public static class StartupShortcut
 
         DeleteIfExists(PreviousShortcutPath);
 
-        var target = Environment.ProcessPath
-            ?? throw new InvalidOperationException("Не удалось определить путь к программе.");
-
-        var shellType = Type.GetTypeFromProgID("WScript.Shell")
-            ?? throw new InvalidOperationException("Компонент WScript.Shell недоступен.");
-        dynamic shell = Activator.CreateInstance(shellType)
-            ?? throw new InvalidOperationException("Не удалось создать WScript.Shell.");
-        try
+        var target = CurrentTarget();
+        WithShell(shell =>
         {
             dynamic shortcut = shell.CreateShortcut(ShortcutPath);
             shortcut.TargetPath = target;
@@ -62,6 +56,64 @@ public static class StartupShortcut
             shortcut.WindowStyle = 1;
             shortcut.Description = "External IP";
             shortcut.Save();
+        });
+    }
+
+    /// <summary>
+    /// Если автозапуск включён, а ярлык ведёт на удалённый exe или на более старую версию
+    /// (скачан и запущен новый релиз из другой папки), ярлык переводится на запущенную программу.
+    /// Копия той же или более старой версии автозапуск не перехватывает. Возвращает true, если ярлык переписан.
+    /// </summary>
+    public static bool RetargetToCurrent()
+    {
+        if (!OperatingSystem.IsWindows() || !Exists())
+            return false;
+
+        var target = CurrentTarget();
+        string? existing = null;
+        WithShell(shell => existing = (string?)shell.CreateShortcut(ShortcutPath).TargetPath);
+        if (!string.IsNullOrWhiteSpace(existing))
+        {
+            if (string.Equals(Path.GetFullPath(existing), Path.GetFullPath(target), StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (File.Exists(existing) && !IsNewer(target, existing))
+                return false;
+        }
+
+        SetEnabled(true);
+        return true;
+    }
+
+    private static bool IsNewer(string candidate, string current)
+    {
+        var next = FileVersion(candidate);
+        var previous = FileVersion(current);
+        return next is not null && previous is not null && next > previous;
+    }
+
+    private static Version? FileVersion(string path)
+    {
+        var info = System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
+        if (info.FileMajorPart == 0 && info.FileMinorPart == 0 && info.FileBuildPart == 0)
+            return null;
+        return new Version(info.FileMajorPart, info.FileMinorPart, info.FileBuildPart, info.FilePrivatePart);
+    }
+
+    private static string CurrentTarget()
+    {
+        return Environment.ProcessPath
+            ?? throw new InvalidOperationException("Не удалось определить путь к программе.");
+    }
+
+    private static void WithShell(Action<dynamic> use)
+    {
+        var shellType = Type.GetTypeFromProgID("WScript.Shell")
+            ?? throw new InvalidOperationException("Компонент WScript.Shell недоступен.");
+        dynamic shell = Activator.CreateInstance(shellType)
+            ?? throw new InvalidOperationException("Не удалось создать WScript.Shell.");
+        try
+        {
+            use(shell);
         }
         finally
         {

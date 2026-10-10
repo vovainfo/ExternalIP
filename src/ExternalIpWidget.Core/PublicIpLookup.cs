@@ -19,6 +19,8 @@ public sealed class PublicIpLookup
         new("ipinfo", "https://ipinfo.io/ip"),
     ];
 
+    public const int MaxResponseBytes = 64 * 1024;
+
     private static readonly AsyncLocal<Action<string>?> ConnectTrace = new();
 
     private readonly HttpClient _http;
@@ -43,7 +45,7 @@ public sealed class PublicIpLookup
         _environmentProxy = environmentProxy;
     }
 
-    public static HttpClient CreateHttpClient(OptionalEnvironmentProxy? proxy = null)
+    public static HttpClient CreateHttpClient(OptionalEnvironmentProxy? proxy = null, string? version = null)
     {
         proxy ??= new OptionalEnvironmentProxy { Mode = ProxyMode.None };
         var handler = new SocketsHttpHandler
@@ -63,11 +65,16 @@ public sealed class PublicIpLookup
         };
         var client = new HttpClient(handler)
         {
+            // Ответы короткие: адрес или небольшой JSON GeoIP. Длинное тело обрывается при чтении,
+            // а не попадает в память целиком.
+            MaxResponseContentBufferSize = MaxResponseBytes,
             Timeout = Timeout.InfiniteTimeSpan,
             DefaultRequestVersion = HttpVersion.Version11,
             DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
         };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("ExternalIpWidget/1.0");
+        if (string.IsNullOrWhiteSpace(version)
+            || !client.DefaultRequestHeaders.UserAgent.TryParseAdd("ExternalIpWidget/" + version.Trim()))
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("ExternalIpWidget/1.0");
         client.DefaultRequestHeaders.Accept.ParseAdd("text/plain");
         client.DefaultRequestHeaders.ConnectionClose = true;
         return client;
@@ -104,11 +111,11 @@ public sealed class PublicIpLookup
                 Note(trace, $"{provider.Name} принят IPv4 {address}");
                 return new PublicIpResult(address, provider.Name, provider.Url, DateTimeOffset.Now);
             }
-            catch (Exception ex) when (IsProviderFailure(ex, cancellationToken))
+            catch (Exception ex) when (ProviderFailure.Is(ex, cancellationToken))
             {
                 last = ex;
                 var reason = Describe(ex);
-                attempts.Add($"{provider.Name}: {Short(ex)}");
+                attempts.Add($"{provider.Name}: {ProviderFailure.Short(ex)}");
                 Note(trace, $"{provider.Name} пропущен: {reason}");
             }
         }
@@ -133,7 +140,7 @@ public sealed class PublicIpLookup
         try
         {
             using var response = await _http
-                .GetAsync(provider.Url, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+                .GetAsync(provider.Url, HttpCompletionOption.ResponseContentRead, timeout.Token)
                 .ConfigureAwait(false);
             var body = response.Content is null
                 ? ""
@@ -256,22 +263,5 @@ public sealed class PublicIpLookup
         }
 
         return parts.Count == 0 ? ex.GetType().Name : string.Join(" ← ", parts);
-    }
-
-    private static bool IsProviderFailure(Exception ex, CancellationToken cancellationToken)
-    {
-        if (cancellationToken.IsCancellationRequested)
-            return false;
-
-        return ex is HttpRequestException or IOException or FormatException or OperationCanceledException;
-    }
-
-    private static string Short(Exception ex)
-    {
-        if (ex is OperationCanceledException)
-            return "таймаут";
-
-        var message = ex.Message.ReplaceLineEndings(" ");
-        return message.Length > 140 ? message[..140] : message;
     }
 }

@@ -57,10 +57,10 @@ public sealed class GeoIpLookup
                     throw new FormatException("В ответе нет данных о местоположении.");
                 return info;
             }
-            catch (Exception ex) when (IsProviderFailure(ex, cancellationToken))
+            catch (Exception ex) when (ProviderFailure.Is(ex, cancellationToken))
             {
                 last = ex;
-                attempts.Add($"{provider.Name}: {Short(ex)}");
+                attempts.Add($"{provider.Name}: {ProviderFailure.Short(ex)}");
             }
         }
 
@@ -134,7 +134,7 @@ public sealed class GeoIpLookup
 
         var url = provider.CreateUrl(canonicalAddress);
         using var response = await _http
-            .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+            .GetAsync(url, HttpCompletionOption.ResponseContentRead, timeout.Token)
             .ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
@@ -209,22 +209,5 @@ public sealed class GeoIpLookup
         }
 
         return null;
-    }
-
-    private static bool IsProviderFailure(Exception ex, CancellationToken cancellationToken)
-    {
-        if (cancellationToken.IsCancellationRequested)
-            return false;
-
-        return ex is HttpRequestException or IOException or FormatException or JsonException or OperationCanceledException;
-    }
-
-    private static string Short(Exception ex)
-    {
-        if (ex is OperationCanceledException)
-            return "таймаут";
-
-        var message = ex.Message.ReplaceLineEndings(" ");
-        return message.Length > 140 ? message[..140] : message;
     }
 }

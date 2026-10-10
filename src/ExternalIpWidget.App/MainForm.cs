@@ -1,9 +1,13 @@
+using System.Net.NetworkInformation;
 using ExternalIpWidget.Core;
+using Microsoft.Win32;
 
 namespace ExternalIpWidget;
 
 public sealed class MainForm : Form
 {
+    private const int RetryAfterErrorMs = 30_000;
+
     private readonly OptionalEnvironmentProxy _environmentProxy;
     private readonly HttpClient _http;
     private readonly PublicIpLookup _lookup;
@@ -14,6 +18,9 @@ public sealed class MainForm : Form
     private readonly ToolTip _toolTip = new();
     private readonly System.Windows.Forms.Timer _refreshTimer = new();
     private readonly System.Windows.Forms.Timer _saveTimer = new() { Interval = 400 };
+    // Смена сети приходит пачкой событий: адаптер VPN поднимается, получает адрес, меняется маршрут.
+    // Проверяем один раз, когда всё успокоится.
+    private readonly System.Windows.Forms.Timer _networkTimer = new() { Interval = 3000 };
     private readonly Font _ipFontLarge;
     private readonly Font _ipFontCompact;
     private readonly Font _eyebrowFont;
@@ -55,6 +62,7 @@ public sealed class MainForm : Form
     private string? _currentAddress;
     private GeoIpInfo? _geoInfo;
     private string? _appliedCustomProxy;
+    private string? _refreshReason;
 
     public MainForm()
     {
@@ -64,7 +72,7 @@ public sealed class MainForm : Form
             Mode = _settings.ProxyMode,
             CustomProxy = _settings.CustomProxy,
         };
-        _http = PublicIpLookup.CreateHttpClient(_environmentProxy);
+        _http = PublicIpLookup.CreateHttpClient(_environmentProxy, AppVersion());
         _lookup = new PublicIpLookup(_http, environmentProxy: _environmentProxy);
         _geo = new GeoIpLookup(_http);
         Font = CreateUiFont("Segoe UI", 9.75f, FontStyle.Regular);
@@ -395,6 +403,14 @@ public sealed class MainForm : Form
             _saveTimer.Stop();
             TrySave();
         };
+        _networkTimer.Tick += (_, _) =>
+        {
+            _networkTimer.Stop();
+            BeginRefresh();
+        };
+        NetworkChange.NetworkAddressChanged += OnNetworkChanged;
+        NetworkChange.NetworkAvailabilityChanged += OnNetworkChanged;
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
         ApplyInterval();
 
         Shown += (_, _) =>
@@ -465,10 +481,14 @@ public sealed class MainForm : Form
     {
         if (disposing)
         {
+            NetworkChange.NetworkAddressChanged -= OnNetworkChanged;
+            NetworkChange.NetworkAvailabilityChanged -= OnNetworkChanged;
+            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
             _lookupCts?.Cancel();
             _lookupCts?.Dispose();
             _refreshTimer.Dispose();
             _saveTimer.Dispose();
+            _networkTimer.Dispose();
             _log.ForceClose();
             _log.Dispose();
             _taskbarBand.Dispose();
@@ -675,6 +695,15 @@ public sealed class MainForm : Form
         _interval.Value = Math.Clamp(_settings.RefreshMinutes, (int)_interval.Minimum, (int)_interval.Maximum);
         _startWithWindows.Checked = StartupShortcut.Exists();
         _settings.StartWithWindows = _startWithWindows.Checked;
+        try
+        {
+            StartupShortcut.RetargetToCurrent();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+            or System.Runtime.InteropServices.COMException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+        {
+            // Автозапуск останется на прежнем exe; работе виджета это не мешает.
+        }
 
         if (_settings.WindowX is int x && _settings.WindowY is int y)
         {
@@ -710,6 +739,52 @@ public sealed class MainForm : Form
         _refreshTimer.Start();
     }
 
+    /// <summary>Пока адрес не получен, спрашиваем чаще, чем по обычному интервалу.</summary>
+    private void RetrySoon()
+    {
+        if (_settings.RefreshMinutes * 60 * 1000 <= RetryAfterErrorMs || _refreshTimer.Interval == RetryAfterErrorMs)
+            return;
+        _refreshTimer.Stop();
+        _refreshTimer.Interval = RetryAfterErrorMs;
+        _refreshTimer.Start();
+    }
+
+    // NetworkChange вызывает обработчики в потоке пула, поэтому переходим в поток окна.
+    private void OnNetworkChanged(object? sender, EventArgs e)
+    {
+        try
+        {
+            if (IsHandleCreated && !IsDisposed)
+                BeginInvoke(() => RefreshAfter("изменилась сеть"));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+        }
+    }
+
+    private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != PowerModes.Resume)
+            return;
+        try
+        {
+            if (IsHandleCreated && !IsDisposed)
+                BeginInvoke(() => RefreshAfter("компьютер вышел из сна"));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
+        {
+        }
+    }
+
+    private void RefreshAfter(string reason)
+    {
+        if (IsDisposed || _exitRequested)
+            return;
+        _refreshReason = reason;
+        _networkTimer.Stop();
+        _networkTimer.Start();
+    }
+
     private async void BeginRefresh()
     {
         try
@@ -742,6 +817,12 @@ public sealed class MainForm : Form
         try
         {
             _log.Clear();
+            if (_refreshReason is not null)
+            {
+                AppendTrace($"{DateTimeOffset.Now:HH:mm:ss.fff} проверка: {_refreshReason}");
+                _refreshReason = null;
+            }
+
             UpdateProxyDetails();
             if (SelectedProxyMode() == ProxyMode.Custom)
                 _appliedCustomProxy = _customProxy.Text.Trim();
@@ -788,6 +869,8 @@ public sealed class MainForm : Form
         if (lookupGeo)
             _geoInfo = null;
 
+        if (_refreshTimer.Interval == RetryAfterErrorMs)
+            ApplyInterval();
         _ipLabel.Text = result.Address;
         if (addressChanged)
             ApplyAddressHighlight(false);
@@ -888,6 +971,9 @@ public sealed class MainForm : Form
         _toolTip.SetToolTip(_status, details);
         _toolTip.SetToolTip(_ipLabel, details);
         ShowStatus("Не удалось обновить адрес", error: true);
+        // Без попыток значит, что неверно задан прокси: повтор ничего не даст, пока его не исправят.
+        if (ex.Attempts.Count > 0)
+            RetrySoon();
     }
 
     private async void BeginCopy()
@@ -1164,9 +1250,10 @@ public sealed class MainForm : Form
         if (screens.Length == 0)
             return [];
 
+        // FromPoint создаёт новый объект Screen, поэтому сравнение только через Equals (по монитору).
         var current = Screen.FromPoint(Cursor.Position);
         return screens
-            .OrderByDescending(screen => ReferenceEquals(screen, current))
+            .OrderByDescending(screen => screen.Equals(current))
             .Select(screen =>
             {
                 var area = screen.WorkingArea;
