@@ -134,7 +134,7 @@ public sealed class GeoIpLookup
 
         var url = provider.CreateUrl(canonicalAddress);
         using var response = await _http
-            .GetAsync(url, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+            .GetAsync(url, HttpCompletionOption.ResponseContentRead, timeout.Token)
             .ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 

@@ -19,6 +19,8 @@ public sealed class PublicIpLookup
         new("ipinfo", "https://ipinfo.io/ip"),
     ];
 
+    public const int MaxResponseBytes = 64 * 1024;
+
     private static readonly AsyncLocal<Action<string>?> ConnectTrace = new();
 
     private readonly HttpClient _http;
@@ -63,6 +65,9 @@ public sealed class PublicIpLookup
         };
         var client = new HttpClient(handler)
         {
+            // Ответы короткие: адрес или небольшой JSON GeoIP. Длинное тело обрывается при чтении,
+            // а не попадает в память целиком.
+            MaxResponseContentBufferSize = MaxResponseBytes,
             Timeout = Timeout.InfiniteTimeSpan,
             DefaultRequestVersion = HttpVersion.Version11,
             DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
@@ -135,7 +140,7 @@ public sealed class PublicIpLookup
         try
         {
             using var response = await _http
-                .GetAsync(provider.Url, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+                .GetAsync(provider.Url, HttpCompletionOption.ResponseContentRead, timeout.Token)
                 .ConfigureAwait(false);
             var body = response.Content is null
                 ? ""
