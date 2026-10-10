@@ -60,8 +60,9 @@ public static class StartupShortcut
     }
 
     /// <summary>
-    /// Если автозапуск включён, но ярлык ведёт на другой exe (например, скачан и запущен новый релиз
-    /// из другой папки), ярлык переводится на запущенную программу. Возвращает true, если ярлык переписан.
+    /// Если автозапуск включён, а ярлык ведёт на удалённый exe или на более старую версию
+    /// (скачан и запущен новый релиз из другой папки), ярлык переводится на запущенную программу.
+    /// Копия той же или более старой версии автозапуск не перехватывает. Возвращает true, если ярлык переписан.
     /// </summary>
     public static bool RetargetToCurrent()
     {
@@ -71,12 +72,31 @@ public static class StartupShortcut
         var target = CurrentTarget();
         string? existing = null;
         WithShell(shell => existing = (string?)shell.CreateShortcut(ShortcutPath).TargetPath);
-        if (!string.IsNullOrWhiteSpace(existing)
-            && string.Equals(Path.GetFullPath(existing), Path.GetFullPath(target), StringComparison.OrdinalIgnoreCase))
-            return false;
+        if (!string.IsNullOrWhiteSpace(existing))
+        {
+            if (string.Equals(Path.GetFullPath(existing), Path.GetFullPath(target), StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (File.Exists(existing) && !IsNewer(target, existing))
+                return false;
+        }
 
         SetEnabled(true);
         return true;
+    }
+
+    private static bool IsNewer(string candidate, string current)
+    {
+        var next = FileVersion(candidate);
+        var previous = FileVersion(current);
+        return next is not null && previous is not null && next > previous;
+    }
+
+    private static Version? FileVersion(string path)
+    {
+        var info = System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
+        if (info.FileMajorPart == 0 && info.FileMinorPart == 0 && info.FileBuildPart == 0)
+            return null;
+        return new Version(info.FileMajorPart, info.FileMinorPart, info.FileBuildPart, info.FilePrivatePart);
     }
 
     private static string CurrentTarget()
