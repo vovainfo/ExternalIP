@@ -48,7 +48,6 @@ internal sealed class RequestLogForm : Form
             Padding = new Padding(12, 4, 12, 4),
             Margin = new Padding(12, 8, 0, 8),
             FlatStyle = FlatStyle.Flat,
-            Cursor = Cursors.Hand,
             UseVisualStyleBackColor = false,
             BackColor = Color.White,
             ForeColor = Color.FromArgb(15, 23, 42),

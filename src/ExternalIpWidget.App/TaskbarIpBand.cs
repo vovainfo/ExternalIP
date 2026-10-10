@@ -74,7 +74,6 @@ internal sealed class TaskbarIpBand : Form
         Size = new Size(84, 60);
         TopMost = true;
         DoubleBuffered = true;
-        Cursor = Cursors.Hand;
         Font = _textFont;
         ApplyTheme(force: true);
 

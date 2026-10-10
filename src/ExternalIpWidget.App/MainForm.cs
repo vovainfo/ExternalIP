@@ -543,7 +543,6 @@ public sealed class MainForm : Form
             Padding = new Padding(12, 0, 12, 0),
             Margin = new Padding(0, 0, 8, 0),
             FlatStyle = FlatStyle.Flat,
-            Cursor = Cursors.Hand,
             UseVisualStyleBackColor = false,
             UseCompatibleTextRendering = false,
         };
