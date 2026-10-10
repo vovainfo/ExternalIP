@@ -828,8 +828,14 @@ public sealed class MainForm : Form
                 _appliedCustomProxy = _customProxy.Text.Trim();
             var progress = new Progress<string>(name =>
             {
-                if (generation == _generation && !IsDisposed)
+                if (generation != _generation || IsDisposed)
+                    return;
+                // Пока адреса нет, ход запроса виден в подписи источника. При повторной проверке
+                // подпись не трогаем, иначе она мигает при каждом обновлении: прогресс идёт в строку статуса.
+                if (_currentAddress is null)
                     _sourceLabel.Text = $"Запрос к {name}…";
+                else
+                    ShowStatus($"Запрос к {name}…", error: false);
             });
             var trace = new Progress<string>(line =>
             {
@@ -871,6 +877,16 @@ public sealed class MainForm : Form
 
         if (_refreshTimer.Interval == RetryAfterErrorMs)
             ApplyInterval();
+        ShowStatus($"Обновлено в {result.RetrievedAt.LocalDateTime:HH:mm:ss}", error: false);
+
+        // Адрес тот же и место уже известно: GeoIP не запрашивается, а адрес, место, подсветка
+        // и строка источника остаются как были, чтобы окно не мигало при каждой проверке.
+        if (!addressChanged && !lookupGeo && _geoInfo is not null)
+        {
+            keepPlaceText = true;
+            return false;
+        }
+
         _ipLabel.Text = result.Address;
         if (addressChanged)
             ApplyAddressHighlight(false);
@@ -878,7 +894,6 @@ public sealed class MainForm : Form
         _copyButton.Enabled = true;
         Text = WindowTitle(result.Address);
         _taskbarBand.SetAddress(result.Address);
-        ShowStatus($"Обновлено в {result.RetrievedAt.LocalDateTime:HH:mm:ss}", error: false);
 
         if (!lookupGeo && _geoInfo is not null)
         {
@@ -945,7 +960,9 @@ public sealed class MainForm : Form
         ApplyAddressHighlight(geo.BelongsToRussia());
         _taskbarBand.SetRussia(geo.BelongsToRussia());
         _toolTip.SetToolTip(_geoLabel, geo.FormatDetails());
-        _sourceLabel.Text = $"Источник: {result.ProviderName} · GeoIP: {geo.ProviderName}";
+        var source = $"Источник: {result.ProviderName} · GeoIP: {geo.ProviderName}";
+        if (_sourceLabel.Text != source)
+            _sourceLabel.Text = source;
         _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl + Environment.NewLine + geo.ProviderUrl);
         SetTrayText($"External IP: {result.Address} · {place}");
     }
