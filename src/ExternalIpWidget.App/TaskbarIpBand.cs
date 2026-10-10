@@ -313,7 +313,8 @@ internal sealed class TaskbarIpBand : Form
 
     private void PlaceCore()
     {
-        if (!TaskbarMetrics.TryGet(out var taskbar, out var tray, out var monitor))
+        if (!TaskbarMetrics.TryGet(out var taskbar, out var tray, out var monitor)
+            || FullScreenWindow.Covers(monitor, Handle))
         {
             HideBand();
             return;
