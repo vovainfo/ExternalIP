@@ -4,6 +4,8 @@ using ExternalIpWidget.Core;
 
 namespace ExternalIpWidget.Core.Tests;
 
+// Ходят в интернет. В CI их можно пропустить: dotnet test --filter "Category!=Live".
+[Trait("Category", "Live")]
 public class LiveLookupTests
 {
     [Fact]

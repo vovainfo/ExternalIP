@@ -10,6 +10,7 @@
     <RootNamespace>ExternalIpWidget</RootNamespace>
     <AssemblyName>ExternalIpWidget</AssemblyName>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <Version>1.2.18</Version>
     <Product>External IP</Product>
     <AssemblyTitle>External IP</AssemblyTitle>

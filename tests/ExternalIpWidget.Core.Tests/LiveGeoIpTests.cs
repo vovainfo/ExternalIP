@@ -2,6 +2,7 @@ using ExternalIpWidget.Core;
 
 namespace ExternalIpWidget.Core.Tests;
 
+[Trait("Category", "Live")]
 public class LiveGeoIpTests
 {
     [Fact]
