@@ -11,7 +11,7 @@
     <AssemblyName>ExternalIpWidget</AssemblyName>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <Version>1.2.18</Version>
+    <Version>1.2.19</Version>
     <Product>External IP</Product>
     <AssemblyTitle>External IP</AssemblyTitle>
     <Description>Виджет внешнего IP-адреса. Адрес запрашивается у внешнего сервиса и не берётся с сетевой карты.</Description>
