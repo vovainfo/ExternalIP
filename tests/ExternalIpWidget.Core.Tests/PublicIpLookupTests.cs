@@ -6,6 +6,17 @@ namespace ExternalIpWidget.Core.Tests;
 
 public class PublicIpLookupTests
 {
+    [Theory]
+    [InlineData("1.2.18", "ExternalIpWidget/1.2.18")]
+    [InlineData(null, "ExternalIpWidget/1.0")]
+    [InlineData("не версия", "ExternalIpWidget/1.0")]
+    public void Puts_the_app_version_into_the_user_agent(string? version, string expected)
+    {
+        using var http = PublicIpLookup.CreateHttpClient(version: version);
+
+        Assert.Equal(expected, http.DefaultRequestHeaders.UserAgent.ToString());
+    }
+
     [Fact]
     public async Task Opens_a_new_connection_for_every_request()
     {

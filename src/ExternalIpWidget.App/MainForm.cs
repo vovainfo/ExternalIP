@@ -64,7 +64,7 @@ public sealed class MainForm : Form
             Mode = _settings.ProxyMode,
             CustomProxy = _settings.CustomProxy,
         };
-        _http = PublicIpLookup.CreateHttpClient(_environmentProxy);
+        _http = PublicIpLookup.CreateHttpClient(_environmentProxy, AppVersion());
         _lookup = new PublicIpLookup(_http, environmentProxy: _environmentProxy);
         _geo = new GeoIpLookup(_http);
         Font = CreateUiFont("Segoe UI", 9.75f, FontStyle.Regular);
