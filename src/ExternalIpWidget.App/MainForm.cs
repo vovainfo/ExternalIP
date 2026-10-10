@@ -1164,9 +1164,10 @@ public sealed class MainForm : Form
         if (screens.Length == 0)
             return [];
 
+        // FromPoint создаёт новый объект Screen, поэтому сравнение только через Equals (по монитору).
         var current = Screen.FromPoint(Cursor.Position);
         return screens
-            .OrderByDescending(screen => ReferenceEquals(screen, current))
+            .OrderByDescending(screen => screen.Equals(current))
             .Select(screen =>
             {
                 var area = screen.WorkingArea;

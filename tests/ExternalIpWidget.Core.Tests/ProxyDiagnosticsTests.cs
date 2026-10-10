@@ -1,65 +1,32 @@
-using System.Net;
 using ExternalIpWidget.Core;
 
 namespace ExternalIpWidget.Core.Tests;
 
 public class ProxyDiagnosticsTests
 {
-    private static readonly Uri Service = new("https://api.ipify.org/");
-
     [Fact]
-    public void Names_the_environment_variable_when_it_points_at_loopback()
+    public void Hides_the_proxy_login_and_password()
     {
-        var lines = ProxyDiagnostics.Explain(
-            Service,
-            new FixedProxy(new Uri("http://user:secret@127.0.0.1:10808")),
-            name => name == "HTTPS_PROXY" ? "http://user:secret@127.0.0.1:10808" : null,
-            () => ["Windows: ProxyEnable=0"]);
+        var text = ProxyDiagnostics.Redact("http://user:secret@127.0.0.1:10808");
 
-        var text = string.Join('\n', lines);
-        Assert.Contains("127.0.0.1:10808", text, StringComparison.Ordinal);
-        Assert.Contains("переменные прокси заданы", text, StringComparison.Ordinal);
-        Assert.Contains("не к ipify", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("secret", text, StringComparison.Ordinal);
-        Assert.Contains("порт 10808", text, StringComparison.Ordinal);
+        Assert.Equal("http://***@127.0.0.1:10808", text);
     }
 
-    [Fact]
-    public void Points_at_windows_settings_when_no_proxy_variable_is_set()
+    [Theory]
+    [InlineData("http://127.0.0.1:10808")]
+    [InlineData("127.0.0.1:10808")]
+    [InlineData("не адрес")]
+    public void Leaves_an_address_without_credentials_as_is(string value)
     {
-        var lines = ProxyDiagnostics.Explain(
-            Service,
-            new FixedProxy(new Uri("http://127.0.0.1:10808")),
-            _ => null,
-            () => ["HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings: ProxyEnable=1, ProxyServer=127.0.0.1:10808"]);
-
-        var text = string.Join('\n', lines);
-        Assert.Contains("переменные HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY не заданы", text, StringComparison.Ordinal);
-        Assert.Contains("системные настройки Windows", text, StringComparison.Ordinal);
-        Assert.Contains("ProxyEnable=1", text, StringComparison.Ordinal);
-        Assert.Contains("это не адрес сервиса", text, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(value, ProxyDiagnostics.Redact(value));
     }
 
-    [Fact]
-    public void Says_when_the_request_goes_straight_to_the_service()
+    [Theory]
+    [InlineData("http://api.ipify.org:443", "https://API.ipify.org/", true)]
+    [InlineData("http://127.0.0.1:10808", "https://api.ipify.org/", false)]
+    [InlineData("http://api.ipify.org:8080", "https://api.ipify.org/", false)]
+    public void Recognises_a_proxy_that_is_the_service_itself(string proxy, string destination, bool same)
     {
-        var lines = ProxyDiagnostics.Explain(
-            Service,
-            new FixedProxy(null, bypass: true),
-            _ => null,
-            () => []);
-
-        var text = string.Join('\n', lines);
-        Assert.Contains("напрямую к имени сервиса", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("127.0.0.1", text, StringComparison.Ordinal);
-    }
-
-    private sealed class FixedProxy(Uri? proxy, bool bypass = false) : IWebProxy
-    {
-        public ICredentials? Credentials { get; set; }
-
-        public Uri? GetProxy(Uri destination) => bypass ? destination : proxy;
-
-        public bool IsBypassed(Uri host) => bypass;
+        Assert.Equal(same, ProxyDiagnostics.SameEndpoint(new Uri(proxy), new Uri(destination)));
     }
 }

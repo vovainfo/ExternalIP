@@ -1,81 +1,12 @@
-using System.Net;
 using System.Runtime.Versioning;
 
 namespace ExternalIpWidget.Core;
 
 /// <summary>
-/// Откуда берётся адрес, к которому реально открывается сокет.
-/// Сервисы вроде ipify его не резолвят в 127.0.0.1: локальный порт — это прокси.
+/// Строки журнала о прокси: настройки Windows из реестра и адреса без логина и пароля.
 /// </summary>
 public static class ProxyDiagnostics
 {
-    private static readonly string[] ProxyVariables = ["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY"];
-
-    public static IReadOnlyList<string> Explain(
-        Uri destination,
-        IWebProxy proxy,
-        Func<string, string?>? environment = null,
-        Func<IReadOnlyList<string>>? windowsSettings = null)
-    {
-        var read = environment ?? Environment.GetEnvironmentVariable;
-        var lines = new List<string>
-        {
-            "правило .NET: если задана HTTP_PROXY, HTTPS_PROXY или ALL_PROXY, берётся она и системный прокси Windows не используется. Иначе берётся системный прокси.",
-            "свой Proxy у HttpClient не задан, поэтому действует это правило.",
-            $"пример URL сервиса: {destination}",
-        };
-
-        var variables = ReadVariables(read);
-        if (variables.Count == 0)
-            lines.Add("переменные HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY не заданы.");
-        else
-        {
-            foreach (var (name, value) in variables)
-                lines.Add($"переменная {name}={Redact(value)}");
-        }
-
-        string? proxyText = null;
-        var direct = false;
-        try
-        {
-            direct = proxy.IsBypassed(destination);
-            if (!direct)
-            {
-                var chosen = proxy.GetProxy(destination);
-                if (chosen is null || SameEndpoint(chosen, destination))
-                    direct = true;
-                else
-                    proxyText = Redact(chosen.ToString());
-            }
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            lines.Add($"не удалось спросить прокси: {ex.GetType().Name}: {ex.Message}");
-        }
-
-        if (direct || proxyText is null)
-        {
-            lines.Add("для этого URL прокси не используется, сокет откроется напрямую к имени сервиса.");
-        }
-        else
-        {
-            lines.Add($"для этого URL прокси: {proxyText}");
-            lines.Add("это не адрес сервиса. Сокет откроется к прокси, а не к ipify или другому сервису. Имя сервиса в DNS не превращалось в 127.0.0.1.");
-            if (variables.Count > 0)
-                lines.Add("переменные прокси заданы, поэтому 127.0.0.1 берётся из них, даже если в Windows записан другой адрес.");
-            else
-                lines.Add("переменных прокси нет, поэтому адрес прокси вернули системные настройки Windows.");
-
-            if (proxyText.Contains("127.0.0.1:10808", StringComparison.Ordinal) || proxyText.Contains("[::1]:10808", StringComparison.Ordinal))
-                lines.Add("порт 10808 — обычный локальный порт прокси. HttpClient обращается к нему как к HTTP-прокси.");
-        }
-
-        foreach (var line in (windowsSettings ?? ReadWindowsInternetSettings)())
-            lines.Add(line);
-
-        return lines;
-    }
-
     public static IReadOnlyList<string> ReadWindowsInternetSettings()
     {
         if (!OperatingSystem.IsWindows())
@@ -101,32 +32,7 @@ public static class ProxyDiagnostics
         return value.Replace(uri.UserInfo + "@", "***@", StringComparison.Ordinal);
     }
 
-    private static List<(string Name, string Value)> ReadVariables(Func<string, string?> read)
-    {
-        var found = new List<(string Name, string Value)>();
-        foreach (var name in ProxyVariables)
-        {
-            var value = First(read, name, name.ToLowerInvariant());
-            if (!string.IsNullOrWhiteSpace(value))
-                found.Add((name, value));
-        }
-
-        return found;
-    }
-
-    private static string? First(Func<string, string?> read, params string[] names)
-    {
-        foreach (var name in names)
-        {
-            var value = read(name);
-            if (!string.IsNullOrWhiteSpace(value))
-                return value;
-        }
-
-        return null;
-    }
-
-    private static bool SameEndpoint(Uri proxy, Uri destination)
+    internal static bool SameEndpoint(Uri proxy, Uri destination)
     {
         return proxy.Host.Equals(destination.Host, StringComparison.OrdinalIgnoreCase)
             && proxy.Port == destination.Port;
