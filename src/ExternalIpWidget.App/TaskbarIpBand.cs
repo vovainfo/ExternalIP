@@ -27,6 +27,8 @@ internal sealed class TaskbarIpBand : Form
     private string _address = "…";
     private AddressLines _lines = AddressLines.From(null);
     private int _nudge;
+    private bool _twoLines = true;
+    private int _customFontPx = TaskbarLabelStyle.AutoFontPx;
     private int _fontForThickness = -1;
     private Font _textFont = new("Segoe UI", 22f, FontStyle.Bold, GraphicsUnit.Pixel);
     private const TextFormatFlags MeasureFlags =
@@ -121,13 +123,27 @@ internal sealed class TaskbarIpBand : Form
         if (text == _address)
             return;
         _address = text;
-        _lines = AddressLines.From(text);
+        _lines = AddressLines.From(text, _twoLines);
         if (_russia)
         {
             _russia = false;
             ApplyTheme(force: true);
         }
 
+        _lastW = int.MinValue;
+        Place();
+        Invalidate();
+    }
+
+    public void SetLayout(bool twoLines, int customFontPx)
+    {
+        customFontPx = TaskbarLabelStyle.NormalizeCustomFontPx(customFontPx);
+        if (twoLines == _twoLines && customFontPx == _customFontPx)
+            return;
+        _twoLines = twoLines;
+        _customFontPx = customFontPx;
+        _lines = AddressLines.From(_address, _twoLines);
+        _fontForThickness = -1;
         _lastW = int.MinValue;
         Place();
         Invalidate();
@@ -343,7 +359,7 @@ internal sealed class TaskbarIpBand : Form
         if (_fontForThickness == barThickness)
             return;
 
-        var px = TaskbarLabelStyle.FontPx(barThickness, LineHeight);
+        var px = TaskbarLabelStyle.FontPx(barThickness, _customFontPx, LineHeight);
         if (Math.Abs(_textFont.Size - px) > 0.5f || _textFont.Unit != GraphicsUnit.Pixel)
             ReplaceFont(px);
         _fontForThickness = barThickness;

@@ -32,6 +32,9 @@ public sealed class MainForm : Form
     private readonly Button _logButton;
     private readonly CheckBox _alwaysOnTop;
     private readonly CheckBox _showOnTaskbar;
+    private readonly CheckBox _taskbarTwoLines;
+    private readonly ComboBox _taskbarFontSize;
+    private readonly FlowLayoutPanel _taskbarRow;
     private readonly CheckBox _startWithWindows;
     private readonly ComboBox _proxyMode;
     private readonly TextBox _customProxy;
@@ -155,6 +158,21 @@ public sealed class MainForm : Form
             AutoSize = true,
             Margin = new Padding(0, 6, 16, 0),
         };
+        _taskbarTwoLines = new CheckBox
+        {
+            Text = "Две строки",
+            AutoSize = true,
+            Margin = new Padding(0, 6, 16, 0),
+        };
+        _taskbarFontSize = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 72,
+            Margin = new Padding(0, 4, 0, 0),
+        };
+        _taskbarFontSize.Items.Add("Авто");
+        for (var px = TaskbarLabelStyle.MinimumCustomFontPx; px <= TaskbarLabelStyle.MaximumCustomFontPx; px++)
+            _taskbarFontSize.Items.Add(px.ToString());
         _startWithWindows = new CheckBox
         {
             Text = "Запускать с Windows",
@@ -251,7 +269,6 @@ public sealed class MainForm : Form
             Margin = new Padding(0, 8, 0, 0),
         };
         options.Controls.Add(_alwaysOnTop);
-        options.Controls.Add(_showOnTaskbar);
         options.Controls.Add(_startWithWindows);
         options.Controls.Add(new Label
         {
@@ -261,6 +278,33 @@ public sealed class MainForm : Form
             ForeColor = Color.FromArgb(71, 85, 105),
         });
         options.Controls.Add(_interval);
+
+        // Настройки плашки стоят под своей галкой с отступом и выключаются вместе с ней.
+        _taskbarRow = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            WrapContents = false,
+            Margin = new Padding(20, 0, 0, 0),
+        };
+        _taskbarRow.Controls.Add(_taskbarTwoLines);
+        _taskbarRow.Controls.Add(new Label
+        {
+            Text = "Размер шрифта",
+            AutoSize = true,
+            Margin = new Padding(0, 8, 8, 0),
+            ForeColor = Color.FromArgb(71, 85, 105),
+        });
+        _taskbarRow.Controls.Add(_taskbarFontSize);
+
+        var taskbarBlock = new FlowLayoutPanel
+        {
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoSize = true,
+            Margin = new Padding(0, 4, 0, 0),
+        };
+        taskbarBlock.Controls.Add(_showOnTaskbar);
+        taskbarBlock.Controls.Add(_taskbarRow);
 
         var proxyBlock = new FlowLayoutPanel
         {
@@ -300,6 +344,7 @@ public sealed class MainForm : Form
         root.Controls.Add(card);
         root.Controls.Add(buttons);
         root.Controls.Add(options);
+        root.Controls.Add(taskbarBlock);
         root.Controls.Add(proxyBlock);
         root.Controls.Add(_status);
         root.Controls.Add(_versionLabel);
@@ -314,6 +359,8 @@ public sealed class MainForm : Form
         _toolTip.SetToolTip(_geoLabel, "Приблизительное местоположение внешнего IP по базе GeoIP. Это не координаты компьютера.");
         _toolTip.SetToolTip(_alwaysOnTop, "Держать окно виджета поверх остальных.");
         _toolTip.SetToolTip(_showOnTaskbar, "Показывать внешний IP на панели задач, слева от часов. Плашку можно перетащить.");
+        _toolTip.SetToolTip(_taskbarTwoLines, "Показывать IP на панели задач в две строки. Если снять флажок, адрес будет в одну строку.");
+        _toolTip.SetToolTip(_taskbarFontSize, "Размер шрифта IP на панели задач в пикселях. «Авто» подбирает его по высоте панели.");
         _toolTip.SetToolTip(_startWithWindows, "Добавить ярлык в папку автозагрузки Windows.");
         _toolTip.SetToolTip(_proxyMode, "Как виджет подключается к сервисам при проверке адреса.");
         _toolTip.SetToolTip(_customProxy, "Хост и порт: 127.0.0.1:8080 или http://хост:порт.");
@@ -542,9 +589,26 @@ public sealed class MainForm : Form
         _showOnTaskbar.CheckedChanged += (_, _) =>
         {
             _taskbarBand.SetEnabled(_showOnTaskbar.Checked);
+            _taskbarRow.Enabled = _showOnTaskbar.Checked;
             if (_loading)
                 return;
             _settings.ShowOnTaskbar = _showOnTaskbar.Checked;
+            ScheduleSave();
+        };
+        _taskbarTwoLines.CheckedChanged += (_, _) =>
+        {
+            ApplyTaskbarLayout();
+            if (_loading)
+                return;
+            _settings.TaskbarTwoLines = _taskbarTwoLines.Checked;
+            ScheduleSave();
+        };
+        _taskbarFontSize.SelectedIndexChanged += (_, _) =>
+        {
+            ApplyTaskbarLayout();
+            if (_loading)
+                return;
+            _settings.TaskbarFontPx = SelectedTaskbarFontPx();
             ScheduleSave();
         };
         _startWithWindows.CheckedChanged += (_, _) => ToggleStartup();
@@ -597,7 +661,11 @@ public sealed class MainForm : Form
     {
         _alwaysOnTop.Checked = _settings.AlwaysOnTop;
         TopMost = _settings.AlwaysOnTop;
+        _taskbarTwoLines.Checked = _settings.TaskbarTwoLines;
+        _taskbarFontSize.SelectedIndex = TaskbarFontIndex(_settings.TaskbarFontPx);
+        ApplyTaskbarLayout();
         _showOnTaskbar.Checked = _settings.ShowOnTaskbar;
+        _taskbarRow.Enabled = _settings.ShowOnTaskbar;
         _customProxy.Text = _settings.CustomProxy;
         _environmentProxy.CustomProxy = _settings.CustomProxy;
         _appliedCustomProxy = _settings.CustomProxy.Trim();
@@ -615,6 +683,24 @@ public sealed class MainForm : Form
             var placed = WindowPlacement.MoveIntoView(window, WorkAreas());
             Location = new Point(placed.X, placed.Y);
         }
+    }
+
+    private void ApplyTaskbarLayout()
+    {
+        _taskbarBand.SetLayout(_taskbarTwoLines.Checked, SelectedTaskbarFontPx());
+    }
+
+    private int SelectedTaskbarFontPx()
+    {
+        return _taskbarFontSize.SelectedIndex <= 0
+            ? TaskbarLabelStyle.AutoFontPx
+            : TaskbarLabelStyle.MinimumCustomFontPx + _taskbarFontSize.SelectedIndex - 1;
+    }
+
+    private static int TaskbarFontIndex(int fontPx)
+    {
+        fontPx = TaskbarLabelStyle.NormalizeCustomFontPx(fontPx);
+        return fontPx == TaskbarLabelStyle.AutoFontPx ? 0 : fontPx - TaskbarLabelStyle.MinimumCustomFontPx + 1;
     }
 
     private void ApplyInterval()

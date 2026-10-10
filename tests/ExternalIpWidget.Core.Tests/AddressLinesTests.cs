@@ -35,6 +35,26 @@ public class AddressLinesTests
         Assert.False(lines.HasSecondLine);
     }
 
+    [Theory]
+    [InlineData("203.0.113.10")]
+    [InlineData("2001:db8::10")]
+    public void Keeps_the_whole_address_on_one_line_when_asked(string address)
+    {
+        var lines = AddressLines.From(" " + address + " ", twoLines: false);
+
+        Assert.Equal(address, lines.Top);
+        Assert.False(lines.HasSecondLine);
+    }
+
+    [Fact]
+    public void Keeps_the_placeholder_when_asked_for_one_line()
+    {
+        var lines = AddressLines.From(null, twoLines: false);
+
+        Assert.Equal("…", lines.Top);
+        Assert.False(lines.HasSecondLine);
+    }
+
     [Fact]
     public void Splits_an_ipv6_address_so_the_label_stays_short()
     {
