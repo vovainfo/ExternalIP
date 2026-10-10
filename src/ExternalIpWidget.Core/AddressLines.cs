@@ -5,17 +5,21 @@ namespace ExternalIpWidget.Core;
 
 /// <summary>
 /// Две строки для компактной плашки: у IPv4 сверху первые два октета, снизу два последних.
+/// Без разбивки весь адрес остаётся в верхней строке.
 /// </summary>
 public readonly record struct AddressLines(string Top, string Bottom)
 {
     public bool HasSecondLine => Bottom.Length > 0;
 
-    public static AddressLines From(string? address)
+    public static AddressLines From(string? address, bool twoLines = true)
     {
         if (string.IsNullOrWhiteSpace(address))
             return new AddressLines("…", "");
 
         var text = address.Trim();
+        if (!twoLines)
+            return new AddressLines(text, "");
+
         if (IPAddress.TryParse(text, out var ip))
         {
             if (ip.AddressFamily == AddressFamily.InterNetwork)

@@ -30,6 +30,11 @@ public sealed class WidgetSettings
 
     public int TaskbarNudge { get; set; }
 
+    public bool TaskbarTwoLines { get; set; } = true;
+
+    /// <summary>Размер шрифта IP на панели задач в пикселях; 0 — подбирать по толщине панели.</summary>
+    public int TaskbarFontPx { get; set; } = TaskbarLabelStyle.AutoFontPx;
+
     public void Normalize()
     {
         if (RefreshMinutes < 1)
@@ -37,6 +42,7 @@ public sealed class WidgetSettings
         if (RefreshMinutes > 120)
             RefreshMinutes = 120;
         TaskbarNudge = Math.Clamp(TaskbarNudge, -10000, 10000);
+        TaskbarFontPx = TaskbarLabelStyle.NormalizeCustomFontPx(TaskbarFontPx);
         ProxyMode = ProxyModeMigration.Resolve(ProxyChoiceSaved, ProxyMode, UseEnvironmentProxy, UseSystemProxy);
         ProxyChoiceSaved = true;
         UseEnvironmentProxy = ProxyMode == ProxyMode.Environment;
