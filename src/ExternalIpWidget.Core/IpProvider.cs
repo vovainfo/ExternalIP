@@ -3,7 +3,7 @@ namespace ExternalIpWidget.Core;
 /// <summary>
 /// Внешний сервис, который видит адрес, с которого пришёл запрос.
 /// </summary>
-public sealed class IpProvider
+public sealed class IpProvider : INamedProvider
 {
     public IpProvider(string name, string url)
     {

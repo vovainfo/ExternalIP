@@ -4,7 +4,7 @@ namespace ExternalIpWidget.Core;
 /// HTTPS-сервис GeoIP. В адресе должен быть плейсхолдер {ip}: местоположение запрашивается
 /// для уже определённого внешнего адреса, а не для адреса сетевой карты.
 /// </summary>
-public sealed class GeoIpProvider
+public sealed class GeoIpProvider : INamedProvider
 {
     public GeoIpProvider(string name, string urlTemplate)
     {

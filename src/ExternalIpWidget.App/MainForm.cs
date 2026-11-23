@@ -21,6 +21,8 @@ public sealed class MainForm : Form
     // Смена сети приходит пачкой событий: адаптер VPN поднимается, получает адрес, меняется маршрут.
     // Проверяем один раз, когда всё успокоится.
     private readonly System.Windows.Forms.Timer _networkTimer = new() { Interval = 3000 };
+    // Сервис обычно двигают на несколько позиций подряд: проверяем один раз, когда щелчки закончились.
+    private readonly System.Windows.Forms.Timer _orderTimer = new() { Interval = 700 };
     private readonly Font _ipFontLarge;
     private readonly Font _ipFontCompact;
     private readonly Font _eyebrowFont;
@@ -47,7 +49,9 @@ public sealed class MainForm : Form
     private readonly TextBox _customProxy;
     private readonly FlowLayoutPanel _customProxyRow;
     private readonly Label _customProxyHint;
+    private readonly Button _orderButton;
     private readonly RequestLogForm _log = new();
+    private readonly ServiceOrderForm _serviceOrder;
     private readonly TaskbarIpBand _taskbarBand;
     private readonly NumericUpDown _interval;
 
@@ -61,6 +65,8 @@ public sealed class MainForm : Form
     private uint _showMessage;
     private string? _currentAddress;
     private GeoIpInfo? _geoInfo;
+    // Порядок GeoIP поменяли: место того же адреса нужно спросить заново, уже в новом порядке.
+    private bool _geoStale;
     private string? _appliedCustomProxy;
     private string? _refreshReason;
 
@@ -73,8 +79,11 @@ public sealed class MainForm : Form
             CustomProxy = _settings.CustomProxy,
         };
         _http = PublicIpLookup.CreateHttpClient(_environmentProxy, AppVersion());
-        _lookup = new PublicIpLookup(_http, environmentProxy: _environmentProxy);
-        _geo = new GeoIpLookup(_http);
+        _lookup = new PublicIpLookup(
+            _http,
+            ProviderOrder.Arrange(_settings.PublicIpOrder, PublicIpLookup.DefaultProviders),
+            environmentProxy: _environmentProxy);
+        _geo = new GeoIpLookup(_http, ProviderOrder.Arrange(_settings.GeoIpOrder, GeoIpLookup.DefaultProviders));
         Font = CreateUiFont("Segoe UI", 9.75f, FontStyle.Regular);
         _ipFontLarge = CreateUiFont(Font.FontFamily.Name, 22f, FontStyle.Bold);
         _ipFontCompact = CreateUiFont(Font.FontFamily.Name, 13f, FontStyle.Bold);
@@ -239,6 +248,12 @@ public sealed class MainForm : Form
             Margin = new Padding(0, 4, 6, 0),
             TextAlign = HorizontalAlignment.Center,
         };
+        _orderButton = CreateButton("Порядок опроса", "Порядок опроса", primary: false);
+        _orderButton.Margin = new Padding(0, 10, 0, 0);
+        _serviceOrder = new ServiceOrderForm(
+            ProviderOrder.Names(null, PublicIpLookup.DefaultProviders),
+            ProviderOrder.Names(null, GeoIpLookup.DefaultProviders),
+            ApplyServiceOrder);
 
         var card = new FlowLayoutPanel
         {
@@ -354,6 +369,7 @@ public sealed class MainForm : Form
         root.Controls.Add(options);
         root.Controls.Add(taskbarBlock);
         root.Controls.Add(proxyBlock);
+        root.Controls.Add(_orderButton);
         root.Controls.Add(_status);
         root.Controls.Add(_versionLabel);
         root.Controls.Add(_copyrightLabel);
@@ -374,6 +390,7 @@ public sealed class MainForm : Form
         _toolTip.SetToolTip(_customProxy, "Хост и порт: 127.0.0.1:8080 или http://хост:порт.");
         _toolTip.SetToolTip(_interval, "Как часто снова спрашивать внешний сервис.");
         _toolTip.SetToolTip(_logButton, "Открыть журнал последнего запроса: прокси, DNS, подключение и ответ сервиса.");
+        _toolTip.SetToolTip(_orderButton, "В каком порядке спрашивать сервисы внешнего IP и GeoIP.");
 
         _taskbarBand = new TaskbarIpBand(
             ShowFromTray,
@@ -406,6 +423,12 @@ public sealed class MainForm : Form
         _networkTimer.Tick += (_, _) =>
         {
             _networkTimer.Stop();
+            BeginRefresh();
+        };
+        _orderTimer.Tick += (_, _) =>
+        {
+            _orderTimer.Stop();
+            _refreshReason = "изменён порядок сервисов";
             BeginRefresh();
         };
         NetworkChange.NetworkAddressChanged += OnNetworkChanged;
@@ -450,6 +473,7 @@ public sealed class MainForm : Form
         RememberLocation();
         TrySave();
         _log.ForceClose();
+        _serviceOrder.ForceClose();
         base.OnFormClosing(e);
     }
 
@@ -489,8 +513,11 @@ public sealed class MainForm : Form
             _refreshTimer.Dispose();
             _saveTimer.Dispose();
             _networkTimer.Dispose();
+            _orderTimer.Dispose();
             _log.ForceClose();
             _log.Dispose();
+            _serviceOrder.ForceClose();
+            _serviceOrder.Dispose();
             _taskbarBand.Dispose();
             _tray.Visible = false;
             _tray.Icon = null;
@@ -564,8 +591,10 @@ public sealed class MainForm : Form
             button.FlatAppearance.MouseDownBackColor = Color.FromArgb(226, 232, 240);
         }
 
+        // Плоская кнопка рисует текст с переносом в поле уже, чем ширина минус Padding: без запаса
+        // длинная надпись уходит на вторую строку, а она обрезается по высоте кнопки.
         var textWidth = TextRenderer.MeasureText(widestText, button.Font).Width;
-        var width = Math.Max(120, textWidth + button.Padding.Horizontal + 8);
+        var width = Math.Max(120, textWidth + button.Padding.Horizontal + 16);
         button.Size = new Size(width, height);
         button.MinimumSize = new Size(width, height);
         button.MaximumSize = new Size(width, height);
@@ -597,6 +626,7 @@ public sealed class MainForm : Form
         _refreshButton.Click += (_, _) => BeginRefresh();
         _copyButton.Click += (_, _) => BeginCopy();
         _logButton.Click += (_, _) => _log.Present();
+        _orderButton.Click += (_, _) => _serviceOrder.Present(TopMost);
         _alwaysOnTop.CheckedChanged += (_, _) =>
         {
             TopMost = _alwaysOnTop.Checked;
@@ -691,6 +721,7 @@ public sealed class MainForm : Form
         _environmentProxy.Mode = _settings.ProxyMode;
         _proxyMode.SelectedIndex = ProxyIndex(_settings.ProxyMode);
         UpdateProxyDetails();
+        _serviceOrder.SetOrders(_settings.PublicIpOrder, _settings.GeoIpOrder);
         _interval.Value = Math.Clamp(_settings.RefreshMinutes, (int)_interval.Minimum, (int)_interval.Maximum);
         _startWithWindows.Checked = StartupShortcut.Exists();
         _settings.StartWithWindows = _startWithWindows.Checked;
@@ -711,6 +742,26 @@ public sealed class MainForm : Form
             var placed = WindowPlacement.MoveIntoView(window, WorkAreas());
             Location = new Point(placed.X, placed.Y);
         }
+    }
+
+    private void ApplyServiceOrder(IReadOnlyList<string> publicIp, IReadOnlyList<string> geoIp)
+    {
+        var publicNames = ProviderOrder.Names(publicIp, PublicIpLookup.DefaultProviders);
+        var geoNames = ProviderOrder.Names(geoIp, GeoIpLookup.DefaultProviders);
+        var publicChanged = !publicNames.SequenceEqual(_settings.PublicIpOrder);
+        var geoChanged = !geoNames.SequenceEqual(_settings.GeoIpOrder);
+        if (!publicChanged && !geoChanged)
+            return;
+
+        _settings.PublicIpOrder = publicNames;
+        _settings.GeoIpOrder = geoNames;
+        _lookup.Providers = ProviderOrder.Arrange(publicNames, PublicIpLookup.DefaultProviders);
+        _geo.Providers = ProviderOrder.Arrange(geoNames, GeoIpLookup.DefaultProviders);
+        ScheduleSave();
+        if (geoChanged)
+            _geoStale = true;
+        _orderTimer.Stop();
+        _orderTimer.Start();
     }
 
     private void ApplyTaskbarLayout()
@@ -868,20 +919,23 @@ public sealed class MainForm : Form
     private bool ShowResult(PublicIpResult result, out bool keepPlaceText)
     {
         var addressChanged = !string.Equals(_currentAddress, result.Address, StringComparison.OrdinalIgnoreCase);
-        var lookupGeo = GeoRefreshPolicy.ShouldQuery(_geoInfo, result.Address);
+        var knownPlace = !GeoRefreshPolicy.ShouldQuery(_geoInfo, result.Address);
+        var lookupGeo = !knownPlace || _geoStale;
         keepPlaceText = lookupGeo && _geoInfo is not null;
         _currentAddress = result.Address;
-        if (lookupGeo)
+        if (!knownPlace)
             _geoInfo = null;
 
         if (_refreshTimer.Interval == RetryAfterErrorMs)
             ApplyInterval();
         ShowStatus($"Обновлено в {result.RetrievedAt.LocalDateTime:HH:mm:ss}", error: false);
 
-        // Адрес тот же и место уже известно: GeoIP не запрашивается, а адрес, место, подсветка
-        // и строка источника остаются как были, чтобы окно не мигало при каждой проверке.
+        // Адрес тот же и место уже известно: GeoIP не запрашивается, а адрес, место и подсветка
+        // остаются как были, чтобы окно не мигало при каждой проверке. Строка источника меняется,
+        // только если адрес сообщил другой сервис (не ответил прежний или изменён порядок).
         if (!addressChanged && !lookupGeo && _geoInfo is not null)
         {
+            ShowSource(result, _geoInfo);
             keepPlaceText = true;
             return false;
         }
@@ -907,9 +961,13 @@ public sealed class MainForm : Form
             _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
         }
 
-        _sourceLabel.Text = $"Источник: {result.ProviderName}";
-        _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl);
-        SetTrayText("External IP: " + result.Address);
+        if (addressChanged || !keepPlaceText)
+        {
+            _sourceLabel.Text = $"Источник: {result.ProviderName}";
+            _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl);
+            SetTrayText("External IP: " + result.Address);
+        }
+
         return true;
     }
 
@@ -932,6 +990,7 @@ public sealed class MainForm : Form
             if (generation != _generation || IsDisposed)
                 return;
 
+            _geoStale = false;
             _geoInfo = geo;
             ShowGeo(result, geo);
             ShowStatus($"Обновлено в {result.RetrievedAt.LocalDateTime:HH:mm:ss}", error: false);
@@ -941,10 +1000,20 @@ public sealed class MainForm : Form
         }
         catch (GeoIpLookupException ex) when (generation == _generation && !IsDisposed)
         {
+            _geoStale = false;
+            var details = ex.Attempts.Count == 0 ? ex.Message : string.Join(Environment.NewLine, ex.Attempts);
+            // Повторный запрос того же адреса не удался: прежнее место (и красная подсветка) остаются в силе.
+            if (_geoInfo is { } known && !GeoRefreshPolicy.ShouldQuery(known, result.Address))
+            {
+                ShowGeo(result, known);
+                _toolTip.SetToolTip(_status, details);
+                ShowStatus($"Обновлено в {result.RetrievedAt.LocalDateTime:HH:mm:ss}, GeoIP не ответил", error: false);
+                return;
+            }
+
             _geoInfo = null;
             _geoLabel.Text = "Местоположение не определено";
             _geoLabel.ForeColor = Color.FromArgb(100, 116, 139);
-            var details = ex.Attempts.Count == 0 ? ex.Message : string.Join(Environment.NewLine, ex.Attempts);
             _toolTip.SetToolTip(_geoLabel, details);
             ShowStatus($"Обновлено в {result.RetrievedAt.LocalDateTime:HH:mm:ss}", error: false);
         }
@@ -959,11 +1028,16 @@ public sealed class MainForm : Form
         ApplyAddressHighlight(geo.BelongsToRussia());
         _taskbarBand.SetRussia(geo.BelongsToRussia());
         _toolTip.SetToolTip(_geoLabel, geo.FormatDetails());
+        ShowSource(result, geo);
+        SetTrayText($"External IP: {result.Address} · {place}");
+    }
+
+    private void ShowSource(PublicIpResult result, GeoIpInfo geo)
+    {
         var source = $"Источник: {result.ProviderName} · GeoIP: {geo.ProviderName}";
         if (_sourceLabel.Text != source)
             _sourceLabel.Text = source;
         _toolTip.SetToolTip(_sourceLabel, result.ProviderUrl + Environment.NewLine + geo.ProviderUrl);
-        SetTrayText($"External IP: {result.Address} · {place}");
     }
 
     private void ShowLookupError(PublicIpLookupException ex)

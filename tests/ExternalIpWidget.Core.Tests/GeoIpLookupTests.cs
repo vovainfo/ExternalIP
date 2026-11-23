@@ -158,6 +158,32 @@ public class GeoIpLookupTests
     }
 
     [Fact]
+    public async Task Asks_services_in_the_newly_chosen_order()
+    {
+        var requested = new List<string>();
+        var handler = new DelegateHandler((request, _) =>
+        {
+            requested.Add(request.RequestUri!.Host);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"ip":"203.0.113.10","country":"Тестовия","city":"Тестград"}"""),
+            });
+        });
+
+        using var http = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        var first = new GeoIpProvider("first", "https://first.test/{ip}");
+        var second = new GeoIpProvider("second", "https://second.test/{ip}");
+        var lookup = new GeoIpLookup(http, [first, second]);
+
+        lookup.Providers = [second, first];
+        var info = await lookup.LookupAsync("203.0.113.10");
+
+        Assert.Equal("second", info.ProviderName);
+        Assert.Equal(["second.test"], requested);
+        Assert.Throws<ArgumentException>(() => lookup.Providers = []);
+    }
+
+    [Fact]
     public async Task Refuses_to_query_a_private_address()
     {
         using var http = new HttpClient(new DelegateHandler((_, _) =>

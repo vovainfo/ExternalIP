@@ -16,8 +16,8 @@ public sealed class GeoIpLookup
     ];
 
     private readonly HttpClient _http;
-    private readonly IReadOnlyList<GeoIpProvider> _providers;
     private readonly TimeSpan _perProviderTimeout;
+    private IReadOnlyList<GeoIpProvider> _providers;
 
     public GeoIpLookup(
         HttpClient httpClient,
@@ -25,13 +25,18 @@ public sealed class GeoIpLookup
         TimeSpan? perProviderTimeout = null)
     {
         _http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        _providers = providers ?? DefaultProviders;
-        if (_providers.Count == 0)
-            throw new ArgumentException("Нужен хотя бы один сервис GeoIP.", nameof(providers));
+        _providers = ValidProviders(providers ?? DefaultProviders, nameof(providers));
 
         _perProviderTimeout = perProviderTimeout ?? TimeSpan.FromSeconds(6);
         if (_perProviderTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(perProviderTimeout));
+    }
+
+    /// <summary>Сервисы в порядке обхода. Новый порядок действует со следующего запроса.</summary>
+    public IReadOnlyList<GeoIpProvider> Providers
+    {
+        get => Volatile.Read(ref _providers);
+        set => Volatile.Write(ref _providers, ValidProviders(value, nameof(value)));
     }
 
     public async Task<GeoIpInfo> LookupAsync(
@@ -45,7 +50,7 @@ public sealed class GeoIpLookup
         var attempts = new List<string>();
         Exception? last = null;
 
-        foreach (var provider in _providers)
+        foreach (var provider in Providers)
         {
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report("GeoIP " + provider.Name);
@@ -143,6 +148,17 @@ public sealed class GeoIpLookup
             throw new FormatException("Слишком длинный ответ GeoIP.");
 
         return Parse(provider.Name, url.ToString(), canonicalAddress, body);
+    }
+
+    private static IReadOnlyList<GeoIpProvider> ValidProviders(IReadOnlyList<GeoIpProvider>? providers, string paramName)
+    {
+        if (providers is null)
+            throw new ArgumentNullException(paramName);
+        if (providers.Count == 0)
+            throw new ArgumentException("Нужен хотя бы один сервис GeoIP.", paramName);
+        if (providers.Any(provider => provider is null))
+            throw new ArgumentException("В списке сервисов GeoIP есть пустой элемент.", paramName);
+        return providers.ToArray();
     }
 
     private static bool IsExplicitFailure(JsonElement root)
