@@ -127,6 +127,63 @@ public sealed class PublicIpLookup
             last);
     }
 
+    /// <summary>
+    /// Спрашивает каждый сервис списка и не останавливается на первом ответе.
+    /// Итоговый список идёт в исходном порядке. Прогресс приходит по мере готовности.
+    /// </summary>
+    public async Task<IReadOnlyList<IpProviderProbe>> ProbeAllAsync(
+        CancellationToken cancellationToken = default,
+        IProgress<IpProviderProbe>? progress = null)
+    {
+        if (_environmentProxy is not null && Uri.TryCreate(_providers[0].Url, UriKind.Absolute, out var sample)
+            && !_environmentProxy.TryValidate(out var proxyError))
+        {
+            var blocked = new IpProviderProbe[_providers.Count];
+            for (var i = 0; i < _providers.Count; i++)
+            {
+                var provider = _providers[i];
+                blocked[i] = new IpProviderProbe(i, provider.Name, provider.Url, null, proxyError);
+                progress?.Report(blocked[i]);
+            }
+
+            return blocked;
+        }
+
+        var results = new IpProviderProbe[_providers.Count];
+        var tasks = new Task[_providers.Count];
+        for (var i = 0; i < _providers.Count; i++)
+            tasks[i] = ProbeProviderAsync(i, _providers[i], results, cancellationToken, progress);
+
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+        return results;
+    }
+
+    private async Task ProbeProviderAsync(
+        int index,
+        IpProvider provider,
+        IpProviderProbe[] results,
+        CancellationToken cancellationToken,
+        IProgress<IpProviderProbe>? progress)
+    {
+        IpProviderProbe probe;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var address = await RequestAddressAsync(provider, cancellationToken, trace: null).ConfigureAwait(false);
+            probe = new IpProviderProbe(index, provider.Name, provider.Url, address, null);
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            var error = ProviderFailure.Is(ex, cancellationToken)
+                ? ProviderFailure.Short(ex)
+                : ex.Message;
+            probe = new IpProviderProbe(index, provider.Name, provider.Url, null, error);
+        }
+
+        results[index] = probe;
+        progress?.Report(probe);
+    }
+
     private async Task<string> RequestAddressAsync(
         IpProvider provider,
         CancellationToken cancellationToken,
