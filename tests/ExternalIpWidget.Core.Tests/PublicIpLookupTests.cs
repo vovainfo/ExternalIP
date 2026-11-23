@@ -186,6 +186,29 @@ public class PublicIpLookupTests
     }
 
     [Fact]
+    public async Task Asks_services_in_the_newly_chosen_order()
+    {
+        var calls = new List<string>();
+        var handler = new DelegateHandler((request, _) =>
+        {
+            calls.Add(request.RequestUri!.AbsolutePath);
+            return Task.FromResult(Text("203.0.113.10"));
+        });
+
+        using var http = Client(handler);
+        var first = new IpProvider("first", "https://example.test/first");
+        var second = new IpProvider("second", "https://example.test/second");
+        var lookup = new PublicIpLookup(http, [first, second]);
+
+        lookup.Providers = [second, first];
+        var result = await lookup.GetAsync();
+
+        Assert.Equal("second", result.ProviderName);
+        Assert.Equal(["/second"], calls);
+        Assert.Throws<ArgumentException>(() => lookup.Providers = []);
+    }
+
+    [Fact]
     public async Task Skips_a_private_address_because_it_is_not_external()
     {
         var handler = new DelegateHandler((request, _) =>

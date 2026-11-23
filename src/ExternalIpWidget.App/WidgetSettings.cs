@@ -35,6 +35,12 @@ public sealed class WidgetSettings
     /// <summary>Размер шрифта IP на панели задач в пикселях; 0 — подбирать по толщине панели.</summary>
     public int TaskbarFontPx { get; set; } = TaskbarLabelStyle.AutoFontPx;
 
+    /// <summary>Имена сервисов внешнего IP в порядке обхода.</summary>
+    public List<string> PublicIpOrder { get; set; } = ProviderOrder.Names(null, PublicIpLookup.DefaultProviders);
+
+    /// <summary>Имена сервисов GeoIP в порядке обхода.</summary>
+    public List<string> GeoIpOrder { get; set; } = ProviderOrder.Names(null, GeoIpLookup.DefaultProviders);
+
     public void Normalize()
     {
         if (RefreshMinutes < 1)
@@ -48,5 +54,7 @@ public sealed class WidgetSettings
         UseEnvironmentProxy = ProxyMode == ProxyMode.Environment;
         UseSystemProxy = ProxyMode == ProxyMode.System;
         CustomProxy = (CustomProxy ?? "").Trim();
+        PublicIpOrder = ProviderOrder.Names(PublicIpOrder, PublicIpLookup.DefaultProviders);
+        GeoIpOrder = ProviderOrder.Names(GeoIpOrder, GeoIpLookup.DefaultProviders);
     }
 }

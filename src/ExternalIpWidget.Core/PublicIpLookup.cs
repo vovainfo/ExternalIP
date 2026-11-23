@@ -24,9 +24,9 @@ public sealed class PublicIpLookup
     private static readonly AsyncLocal<Action<string>?> ConnectTrace = new();
 
     private readonly HttpClient _http;
-    private readonly IReadOnlyList<IpProvider> _providers;
     private readonly TimeSpan _perProviderTimeout;
     private readonly OptionalEnvironmentProxy? _environmentProxy;
+    private IReadOnlyList<IpProvider> _providers;
 
     public PublicIpLookup(
         HttpClient httpClient,
@@ -35,14 +35,19 @@ public sealed class PublicIpLookup
         OptionalEnvironmentProxy? environmentProxy = null)
     {
         _http = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
-        _providers = providers ?? DefaultProviders;
-        if (_providers.Count == 0)
-            throw new ArgumentException("Нужен хотя бы один сервис.", nameof(providers));
+        _providers = ValidProviders(providers ?? DefaultProviders, nameof(providers));
 
         _perProviderTimeout = perProviderTimeout ?? TimeSpan.FromSeconds(6);
         if (_perProviderTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(perProviderTimeout));
         _environmentProxy = environmentProxy;
+    }
+
+    /// <summary>Сервисы в порядке обхода. Новый порядок действует со следующей проверки.</summary>
+    public IReadOnlyList<IpProvider> Providers
+    {
+        get => Volatile.Read(ref _providers);
+        set => Volatile.Write(ref _providers, ValidProviders(value, nameof(value)));
     }
 
     public static HttpClient CreateHttpClient(OptionalEnvironmentProxy? proxy = null, string? version = null)
@@ -85,10 +90,11 @@ public sealed class PublicIpLookup
         IProgress<string>? progress = null,
         IProgress<string>? trace = null)
     {
+        var providers = Providers;
         var attempts = new List<string>();
         Exception? last = null;
-        Note(trace, $"старт, сервисов {_providers.Count}, таймаут {_perProviderTimeout.TotalSeconds:0} с, соединение только IPv4");
-        if (_environmentProxy is not null && Uri.TryCreate(_providers[0].Url, UriKind.Absolute, out var sample))
+        Note(trace, $"старт, сервисов {providers.Count}, таймаут {_perProviderTimeout.TotalSeconds:0} с, соединение только IPv4");
+        if (_environmentProxy is not null && Uri.TryCreate(providers[0].Url, UriKind.Absolute, out var sample))
         {
             foreach (var line in _environmentProxy.Describe(sample))
                 Note(trace, line);
@@ -99,7 +105,7 @@ public sealed class PublicIpLookup
             }
         }
 
-        foreach (var provider in _providers)
+        foreach (var provider in providers)
         {
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report(provider.Name);
@@ -223,6 +229,17 @@ public sealed class PublicIpLookup
 
             throw;
         }
+    }
+
+    private static IReadOnlyList<IpProvider> ValidProviders(IReadOnlyList<IpProvider>? providers, string paramName)
+    {
+        if (providers is null)
+            throw new ArgumentNullException(paramName);
+        if (providers.Count == 0)
+            throw new ArgumentException("Нужен хотя бы один сервис.", paramName);
+        if (providers.Any(provider => provider is null))
+            throw new ArgumentException("В списке сервисов есть пустой элемент.", paramName);
+        return providers.ToArray();
     }
 
     private static bool IsLoopback(string host)
