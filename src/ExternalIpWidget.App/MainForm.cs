@@ -1,4 +1,5 @@
 using System.Net.NetworkInformation;
+using System.Runtime.InteropServices;
 using ExternalIpWidget.Core;
 using Microsoft.Win32;
 
@@ -10,7 +11,7 @@ public sealed class MainForm : Form
 
     private readonly OptionalEnvironmentProxy _environmentProxy;
     private readonly HttpClient _http;
-    private readonly PublicIpLookup _lookup;
+    private PublicIpLookup _lookup;
     private readonly GeoIpLookup _geo;
     private readonly WidgetSettings _settings = SettingsStore.Load();
     private readonly Icon _icon = WidgetIcon.Create();
@@ -37,7 +38,9 @@ public sealed class MainForm : Form
     private readonly Button _refreshButton;
     private readonly Button _copyButton;
     private readonly Button _logButton;
+    private readonly Button _providersButton;
     private readonly CheckBox _alwaysOnTop;
+    private readonly CheckBox _hideMainWindow;
     private readonly CheckBox _showOnTaskbar;
     private readonly CheckBox _taskbarTwoLines;
     private readonly ComboBox _taskbarFontSize;
@@ -57,6 +60,8 @@ public sealed class MainForm : Form
     private bool _loading = true;
     private bool _ready;
     private bool _hiding;
+    private bool _allowShow = true;
+    private bool _startedHiddenRefresh;
     private bool _exitRequested;
     private uint _showMessage;
     private string? _currentAddress;
@@ -73,7 +78,7 @@ public sealed class MainForm : Form
             CustomProxy = _settings.CustomProxy,
         };
         _http = PublicIpLookup.CreateHttpClient(_environmentProxy, AppVersion());
-        _lookup = new PublicIpLookup(_http, environmentProxy: _environmentProxy);
+        _lookup = new PublicIpLookup(_http, IpProviderFile.Load(), environmentProxy: _environmentProxy);
         _geo = new GeoIpLookup(_http);
         Font = CreateUiFont("Segoe UI", 9.75f, FontStyle.Regular);
         _ipFontLarge = CreateUiFont(Font.FontFamily.Name, 22f, FontStyle.Bold);
@@ -154,9 +159,16 @@ public sealed class MainForm : Form
         _copyButton = CreateButton("Копировать", "Скопировано", primary: false);
         _copyButton.Enabled = false;
         _logButton = CreateButton("Журнал запросов", "Журнал запросов", primary: false);
+        _providersButton = CreateButton("Сервисы", "Сервисы", primary: false);
         _alwaysOnTop = new CheckBox
         {
             Text = "Поверх всех окон",
+            AutoSize = true,
+            Margin = new Padding(0, 6, 16, 0),
+        };
+        _hideMainWindow = new CheckBox
+        {
+            Text = "Не показывать окно",
             AutoSize = true,
             Margin = new Padding(0, 6, 16, 0),
         };
@@ -268,15 +280,20 @@ public sealed class MainForm : Form
         buttons.Controls.Add(_refreshButton);
         buttons.Controls.Add(_copyButton);
         buttons.Controls.Add(_logButton);
+        buttons.Controls.Add(_providersButton);
+        var buttonRowWidth = buttons.GetPreferredSize(Size.Empty).Width;
+        card.MinimumSize = new Size(Math.Max(card.MinimumSize.Width, buttonRowWidth), 0);
+        card.MaximumSize = new Size(card.MinimumSize.Width, 0);
 
         var options = new FlowLayoutPanel
         {
             AutoSize = true,
             WrapContents = true,
-            MaximumSize = new Size(436, 0),
+            MaximumSize = new Size(card.MinimumSize.Width, 0),
             Margin = new Padding(0, 8, 0, 0),
         };
         options.Controls.Add(_alwaysOnTop);
+        options.Controls.Add(_hideMainWindow);
         options.Controls.Add(_startWithWindows);
         options.Controls.Add(new Label
         {
@@ -319,7 +336,7 @@ public sealed class MainForm : Form
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
             AutoSize = true,
-            MaximumSize = new Size(436, 0),
+            MaximumSize = new Size(card.MinimumSize.Width, 0),
             Margin = new Padding(0, 8, 0, 0),
         };
         var proxyRow = new FlowLayoutPanel
@@ -366,6 +383,7 @@ public sealed class MainForm : Form
         _toolTip.SetToolTip(_ipLabel, "Адрес, который видит внешний сервис.");
         _toolTip.SetToolTip(_geoLabel, "Приблизительное местоположение внешнего IP по базе GeoIP. Это не координаты компьютера.");
         _toolTip.SetToolTip(_alwaysOnTop, "Держать окно виджета поверх остальных.");
+        _toolTip.SetToolTip(_hideMainWindow, "При запуске не открывать это окно. IP остаётся на панели задач. Окно открывается щелчком по плашке или по значку у часов.");
         _toolTip.SetToolTip(_showOnTaskbar, "Показывать внешний IP на панели задач, слева от часов. Плашку можно перетащить.");
         _toolTip.SetToolTip(_taskbarTwoLines, "Показывать IP на панели задач в две строки. Если снять флажок, адрес будет в одну строку.");
         _toolTip.SetToolTip(_taskbarFontSize, "Размер шрифта IP на панели задач в пикселях. «Авто» подбирает его по высоте панели.");
@@ -374,6 +392,7 @@ public sealed class MainForm : Form
         _toolTip.SetToolTip(_customProxy, "Хост и порт: 127.0.0.1:8080 или http://хост:порт.");
         _toolTip.SetToolTip(_interval, "Как часто снова спрашивать внешний сервис.");
         _toolTip.SetToolTip(_logButton, "Открыть журнал последнего запроса: прокси, DNS, подключение и ответ сервиса.");
+        _toolTip.SetToolTip(_providersButton, "Порядок сервисов, у которых виджет спрашивает внешний IP. Можно убрать сервис или добавить свой.");
 
         _taskbarBand = new TaskbarIpBand(
             ShowFromTray,
@@ -412,12 +431,29 @@ public sealed class MainForm : Form
         NetworkChange.NetworkAvailabilityChanged += OnNetworkChanged;
         SystemEvents.PowerModeChanged += OnPowerModeChanged;
         ApplyInterval();
+        _allowShow = !_settings.HideMainWindow;
+        if (!_allowShow)
+            ShowInTaskbar = false;
 
         Shown += (_, _) =>
         {
             EnsureOnScreen();
             BeginRefresh();
         };
+    }
+
+    protected override void SetVisibleCore(bool value)
+    {
+        if (!_allowShow)
+            value = false;
+        if (!IsHandleCreated)
+            CreateHandle();
+        base.SetVisibleCore(value);
+        if (!_allowShow && !_startedHiddenRefresh)
+        {
+            _startedHiddenRefresh = true;
+            BeginRefresh();
+        }
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -432,6 +468,16 @@ public sealed class MainForm : Form
         if (_showMessage != 0 && m.Msg == (int)_showMessage)
         {
             ShowFromTray();
+            return;
+        }
+
+        const int wmSysCommand = 0x0112;
+        const int scMinimize = 0xF020;
+        if (m.Msg == wmSysCommand && (m.WParam.ToInt32() & 0xFFF0) == scMinimize)
+        {
+            // Не переводить окно в свёрнутое состояние: Windows 11 иначе оставляет
+            // на экране маленькую шапку с кнопкой закрытия.
+            HideToTray();
             return;
         }
 
@@ -597,12 +643,20 @@ public sealed class MainForm : Form
         _refreshButton.Click += (_, _) => BeginRefresh();
         _copyButton.Click += (_, _) => BeginCopy();
         _logButton.Click += (_, _) => _log.Present();
+        _providersButton.Click += (_, _) => EditIpProviders();
         _alwaysOnTop.CheckedChanged += (_, _) =>
         {
             TopMost = _alwaysOnTop.Checked;
             if (_loading)
                 return;
             _settings.AlwaysOnTop = _alwaysOnTop.Checked;
+            ScheduleSave();
+        };
+        _hideMainWindow.CheckedChanged += (_, _) =>
+        {
+            if (_loading)
+                return;
+            _settings.HideMainWindow = _hideMainWindow.Checked;
             ScheduleSave();
         };
         _showOnTaskbar.CheckedChanged += (_, _) =>
@@ -676,10 +730,32 @@ public sealed class MainForm : Form
         };
     }
 
+    private void EditIpProviders()
+    {
+        using var dialog = new IpProvidersForm(_http, IpProviderFile.Load(), _environmentProxy);
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+            return;
+
+        IReadOnlyList<IpProvider> providers;
+        try
+        {
+            providers = IpProviderFile.Save(dialog.Providers);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ShowStatus("Не удалось записать ip-providers.json рядом с программой.", error: true);
+            return;
+        }
+
+        _lookup = new PublicIpLookup(_http, providers, environmentProxy: _environmentProxy);
+        BeginRefresh();
+    }
+
     private void ApplySettings()
     {
         _alwaysOnTop.Checked = _settings.AlwaysOnTop;
         TopMost = _settings.AlwaysOnTop;
+        _hideMainWindow.Checked = _settings.HideMainWindow;
         _taskbarTwoLines.Checked = _settings.TaskbarTwoLines;
         _taskbarFontSize.SelectedIndex = TaskbarFontIndex(_settings.TaskbarFontPx);
         ApplyTaskbarLayout();
@@ -1055,10 +1131,14 @@ public sealed class MainForm : Form
         try
         {
             RememberLocation();
+            if (IsHandleCreated && WindowState == FormWindowState.Minimized)
+                ShowWindow(Handle, SwHide);
+            if (WindowState != FormWindowState.Normal)
+                WindowState = FormWindowState.Normal;
             Hide();
             ShowInTaskbar = false;
-            if (WindowState == FormWindowState.Minimized)
-                WindowState = FormWindowState.Normal;
+            if (IsHandleCreated)
+                ShowWindow(Handle, SwHide);
             RestoreRememberedLocation();
             if (!_settings.TrayHintShown)
             {
@@ -1077,8 +1157,14 @@ public sealed class MainForm : Form
         }
     }
 
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    private const int SwHide = 0;
+
     private void ShowFromTray()
     {
+        _allowShow = true;
         ShowInTaskbar = true;
         if (WindowState != FormWindowState.Normal)
             WindowState = FormWindowState.Normal;

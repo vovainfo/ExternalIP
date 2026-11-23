@@ -157,6 +157,43 @@ public class PublicIpLookupTests
     }
 
     [Fact]
+    public async Task Probe_keeps_order_and_reports_a_failure_without_waiting_for_it()
+    {
+        var releaseSlow = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fastReported = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new DelegateHandler(async (request, cancellationToken) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/slow", StringComparison.Ordinal))
+            {
+                await releaseSlow.Task.WaitAsync(cancellationToken);
+                return Text("not-an-ip");
+            }
+
+            fastReported.TrySetResult();
+            return Text("203.0.113.10");
+        });
+
+        using var http = Client(handler);
+        var lookup = new PublicIpLookup(http,
+        [
+            new IpProvider("slow", "https://example.test/slow"),
+            new IpProvider("fast", "https://example.test/fast"),
+        ]);
+
+        var probe = lookup.ProbeAllAsync();
+        await fastReported.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        releaseSlow.TrySetResult();
+        var results = await probe.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(["slow", "fast"], results.Select(item => item.Name).ToArray());
+        Assert.Equal([0, 1], results.Select(item => item.Index).ToArray());
+        Assert.Null(results[0].Address);
+        Assert.False(string.IsNullOrWhiteSpace(results[0].Error));
+        Assert.Equal("203.0.113.10", results[1].Address);
+        Assert.Null(results[1].Error);
+    }
+
+    [Fact]
     public async Task Uses_the_first_response_that_is_an_ip_address()
     {
         var calls = new List<string>();

@@ -10,6 +10,9 @@ public sealed class WidgetSettings
 
     public bool StartWithWindows { get; set; }
 
+    /// <summary>При запуске не открывать главное окно: остаётся плашка на панели задач.</summary>
+    public bool HideMainWindow { get; set; }
+
     public int? WindowX { get; set; }
 
     public int? WindowY { get; set; }
